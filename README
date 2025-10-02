@@ -1,28 +1,28 @@
 # SacrOS
 
-SacrOS is a fully open-source operating system designed for both mobile and desktop devices. It is built to be fast, modular, and adaptable, supporting a wide range of hardware and software environments. SacrOS leverages the **QCMFS (Quick Connect Modular Framework System)**, making it easy for developers and users to add, remove, or modify system modules without compromising stability.
+SacrOS is a fully open-source operating system designed for both mobile and desktop devices. It is fast, modular, and adaptable, supporting a wide range of hardware and software environments. SacrOS leverages the **QCMFS (Quick Connect Modular Framework System)**, making it easy for developers and users to add, remove, or modify system modules without compromising stability.
 
 ## Features
 
-- **Cross-Platform Support:** Works seamlessly on mobile devices, laptops, and desktops.
-- **Modular Architecture:** QCMFS allows you to attach modules like magnetic interfaces, sensors, or custom hardware adapters.
-- **Open Source & Customizable:** The OS is fully open source, allowing you to modify it to suit your needs.
-- **Optimized Performance:** Lightweight and efficient, SacrOS is designed to make the most of your device's resources.
+- **Cross-Platform Support:** Works seamlessly on mobile devices, laptops, and desktops.  
+- **Modular Architecture:** QCMFS allows you to attach modules like magnetic interfaces, sensors, or custom hardware adapters.  
+- **Open Source & Customizable:** Fully open source, allowing you to modify it to suit your needs.  
+- **Optimized Performance:** Lightweight and efficient, SacrOS maximizes your device's resources.
 
 ## Usage
 
-You may use, modify, and adapt SacrOS as needed for personal or development purposes. However:  
+You may use, modify, and adapt SacrOS for personal or development purposes. However:
 
 - **You may not redistribute or sell this software.**  
 - **Modifications are encouraged** for personal or experimental use **ONLY**.
 
-SacrOS ships pre-installed on all devices that support QCMFS (Mainly the Personal Module (PM-QCMFS), ensuring full compatibility with modular extensions and other system features.
+SacrOS ships pre-installed on all devices that support QCMFS (mainly the Personal Module, PM-QCMFS), ensuring full compatibility with modular extensions and other system features.
 
 ## Getting Started
 
 1. Download the latest SacrOS image for your device.  
 2. Follow the installation guide for desktop or mobile setup.  
 3. Explore the modular system and customize the OS to fit your needs.  
-4. Join the community for support, updates, and module sharing.  
+4. Join the community for support, updates, and module sharing.
 
 SacrOS is built to give you control over your device. SacrOS adapts to you.
