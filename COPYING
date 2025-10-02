@@ -1,20 +1,18 @@
-The Linux Kernel is provided under:
+# SacrOS License
 
-	SPDX-License-Identifier: GPL-2.0 WITH Linux-syscall-note
+Copyright (c) 2025 Sacrafex Developers
 
-Being under the terms of the GNU General Public License version 2 only,
-according with:
+Permission is granted to use, modify, and adapt SacrOS for personal, educational, or development purposes. You may customize, improve, and experiment with the software as needed. 
 
-	LICENSES/preferred/GPL-2.0
+However, the following restrictions apply:
 
-With an explicit syscall exception, as stated at:
+1. **No Redistribution or Sale**  
+   You may not sell, sublicense, or redistribute SacrOS or any derivative work based on it, in whole or in part, without explicit written permission from Sacrafex Developers.
 
-	LICENSES/exceptions/Linux-syscall-note
+2. **Attribution**  
+   Any modifications or derivative works must clearly indicate that they are based on SacrOS and credit Sacrafex Developers as the original creators. This includes, but is not limited to 3rd party applications or modules.
 
-In addition, other licenses may also apply. Please see:
+3. **Warranty Disclaimer**  
+   SacrOS is provided "as-is", without any warranty of any kind. The authors are not liable for any damages, data loss, or malfunctions resulting from the use or modification of this software.
 
-	Documentation/process/license-rules.rst
-
-for more details.
-
-All contributions to the Linux Kernel are subject to this COPYING file.
+By using SacrOS, you agree to these terms. You are free to explore, modify, and learn from the software, but commercial exploitation or unauthorized distribution is prohibited.
