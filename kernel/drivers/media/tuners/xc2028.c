@@ -14,7 +14,7 @@
 #include <media/tuner.h>
 #include <linux/mutex.h>
 #include <linux/slab.h>
-#include <linux/unaligned.h>
+#include <asm/unaligned.h>
 #include "tuner-i2c.h"
 #include "xc2028.h"
 #include "xc2028-types.h"
@@ -1373,7 +1373,6 @@ static void load_firmware_cb(const struct firmware *fw,
 
 	tuner_dbg("request_firmware_nowait(): %s\n", fw ? "OK" : "error");
 	if (!fw) {
-		tuner_err("Could not load firmware %s.\n", priv->fname);
 		priv->state = XC2028_NODEV;
 		return;
 	}

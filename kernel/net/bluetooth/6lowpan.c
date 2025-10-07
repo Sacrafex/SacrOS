@@ -13,7 +13,6 @@
 #include <net/ipv6.h>
 #include <net/ip6_route.h>
 #include <net/addrconf.h>
-#include <net/netdev_lock.h>
 #include <net/pkt_sched.h>
 
 #include <net/bluetooth/bluetooth.h>
@@ -134,7 +133,7 @@ static inline struct lowpan_peer *peer_lookup_dst(struct lowpan_btle_dev *dev,
 						  struct in6_addr *daddr,
 						  struct sk_buff *skb)
 {
-	struct rt6_info *rt = dst_rt6_info(skb_dst(skb));
+	struct rt6_info *rt = (struct rt6_info *)skb_dst(skb);
 	int count = atomic_read(&dev->peer_count);
 	const struct in6_addr *nexthop;
 	struct lowpan_peer *peer;
@@ -444,7 +443,7 @@ static int send_pkt(struct l2cap_chan *chan, struct sk_buff *skb,
 	memset(&msg, 0, sizeof(msg));
 	iov_iter_kvec(&msg.msg_iter, ITER_SOURCE, &iv, 1, skb->len);
 
-	err = l2cap_chan_send(chan, &msg, skb->len, NULL);
+	err = l2cap_chan_send(chan, &msg, skb->len);
 	if (err > 0) {
 		netdev->stats.tx_bytes += err;
 		netdev->stats.tx_packets++;
@@ -573,7 +572,7 @@ static void netdev_setup(struct net_device *dev)
 	dev->needs_free_netdev	= true;
 }
 
-static const struct device_type bt_type = {
+static struct device_type bt_type = {
 	.name	= "bluetooth",
 };
 
@@ -898,7 +897,7 @@ static int bt_6lowpan_connect(bdaddr_t *addr, u8 dst_type)
 	chan->ops = &bt_6lowpan_chan_ops;
 
 	err = l2cap_chan_connect(chan, cpu_to_le16(L2CAP_PSM_IPSP), 0,
-				 addr, dst_type, L2CAP_CONN_TIMEOUT);
+				 addr, dst_type);
 
 	BT_DBG("chan %p err %d", chan, err);
 	if (err < 0)

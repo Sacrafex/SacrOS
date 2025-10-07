@@ -332,11 +332,8 @@ static void update_edgeport_E2PROM(struct edgeport_serial *edge_serial)
 
 	response = request_ihex_firmware(&fw, fw_name,
 					 &edge_serial->serial->dev->dev);
-	if (response) {
-		dev_err(dev, "Failed to load image \"%s\" err %d\n",
-		       fw_name, response);
+	if (response)
 		return;
-	}
 
 	rec = (const struct ihex_binrec *)fw->data;
 	BootMajorVersion = rec->data[0];
@@ -1129,7 +1126,7 @@ static int edge_write(struct tty_struct *tty, struct usb_serial_port *port,
 	spin_lock_irqsave(&edge_port->ep_lock, flags);
 
 	/* calculate number of bytes to put in fifo */
-	copySize = min_t(unsigned int, count,
+	copySize = min((unsigned int)count,
 				(edge_port->txCredits - fifo->count));
 
 	dev_dbg(&port->dev, "%s of %d byte(s) Fifo room  %d -- will copy %d bytes\n",
@@ -1560,12 +1557,12 @@ static int edge_ioctl(struct tty_struct *tty,
  * SerialBreak
  *	this function sends a break to the port
  *****************************************************************************/
-static int edge_break(struct tty_struct *tty, int break_state)
+static void edge_break(struct tty_struct *tty, int break_state)
 {
 	struct usb_serial_port *port = tty->driver_data;
 	struct edgeport_port *edge_port = usb_get_serial_port_data(port);
 	struct edgeport_serial *edge_serial = usb_get_serial_data(port->serial);
-	int status = 0;
+	int status;
 
 	if (!edge_serial->is_epic ||
 	    edge_serial->epic_descriptor.Supports.IOSPChase) {
@@ -1597,8 +1594,6 @@ static int edge_break(struct tty_struct *tty, int break_state)
 			dev_dbg(&port->dev, "%s - error sending break set/clear command.\n",
 				__func__);
 	}
-
-	return status;
 }
 
 
@@ -2978,6 +2973,7 @@ static void edge_port_remove(struct usb_serial_port *port)
 
 static struct usb_serial_driver edgeport_2port_device = {
 	.driver = {
+		.owner		= THIS_MODULE,
 		.name		= "edgeport_2",
 	},
 	.description		= "Edgeport 2 port adapter",
@@ -3012,6 +3008,7 @@ static struct usb_serial_driver edgeport_2port_device = {
 
 static struct usb_serial_driver edgeport_4port_device = {
 	.driver = {
+		.owner		= THIS_MODULE,
 		.name		= "edgeport_4",
 	},
 	.description		= "Edgeport 4 port adapter",
@@ -3046,6 +3043,7 @@ static struct usb_serial_driver edgeport_4port_device = {
 
 static struct usb_serial_driver edgeport_8port_device = {
 	.driver = {
+		.owner		= THIS_MODULE,
 		.name		= "edgeport_8",
 	},
 	.description		= "Edgeport 8 port adapter",
@@ -3080,6 +3078,7 @@ static struct usb_serial_driver edgeport_8port_device = {
 
 static struct usb_serial_driver epic_device = {
 	.driver = {
+		.owner		= THIS_MODULE,
 		.name		= "epic",
 	},
 	.description		= "EPiC device",

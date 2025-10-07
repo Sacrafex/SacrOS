@@ -4,10 +4,10 @@
  *
  * Copyright (C) 2022 Google LLC
  */
-#include <linux/string.h>
-#include <linux/cfi.h>
+#include <asm/cfi.h>
 #include <asm/insn.h>
 #include <asm/insn-eval.h>
+#include <linux/string.h>
 
 /*
  * Returns the target address and the expected type when regs->ip points
@@ -67,30 +67,16 @@ static bool decode_cfi_insn(struct pt_regs *regs, unsigned long *target,
  */
 enum bug_trap_type handle_cfi_failure(struct pt_regs *regs)
 {
-	unsigned long target, addr = regs->ip;
+	unsigned long target;
 	u32 type;
 
-	switch (cfi_mode) {
-	case CFI_KCFI:
-		if (!is_cfi_trap(addr))
-			return BUG_TRAP_TYPE_NONE;
-
-		if (!decode_cfi_insn(regs, &target, &type))
-			return report_cfi_failure_noaddr(regs, addr);
-
-		break;
-
-	case CFI_FINEIBT:
-		if (!decode_fineibt_insn(regs, &target, &type))
-			return BUG_TRAP_TYPE_NONE;
-
-		break;
-
-	default:
+	if (!is_cfi_trap(regs->ip))
 		return BUG_TRAP_TYPE_NONE;
-	}
 
-	return report_cfi_failure(regs, addr, &target, type);
+	if (!decode_cfi_insn(regs, &target, &type))
+		return report_cfi_failure_noaddr(regs, regs->ip);
+
+	return report_cfi_failure(regs, regs->ip, &target, type);
 }
 
 /*

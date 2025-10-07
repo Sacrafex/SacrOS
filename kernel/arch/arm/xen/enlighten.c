@@ -442,7 +442,7 @@ static int __init xen_guest_init(void)
 		return 0;
 
 	if (IS_ENABLED(CONFIG_XEN_VIRTIO))
-		virtio_set_mem_acc_cb(xen_virtio_restricted_mem_acc);
+		virtio_set_mem_acc_cb(xen_virtio_mem_acc);
 
 	if (!acpi_disabled)
 		xen_acpi_guest_init();
@@ -541,7 +541,7 @@ static int __init xen_late_init(void)
 	if (!xen_domain())
 		return -ENODEV;
 
-	register_platform_power_off(xen_power_off);
+	pm_power_off = xen_power_off;
 	register_restart_handler(&xen_restart_nb);
 	if (!xen_initial_domain()) {
 		struct timespec64 ts;

@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-2.0 OR Linux-OpenIB
+// SPDX-License-Identifier: GPL-2.0 or Linux-OpenIB
 /* Copyright (c) 2015 - 2021 Intel Corporation */
 #include "main.h"
 
@@ -320,6 +320,9 @@ int irdma_netdevice_event(struct notifier_block *notifier, unsigned long event,
 	case NETDEV_DOWN:
 		iwdev->iw_status = 0;
 		fallthrough;
+	case NETDEV_UP:
+		irdma_port_ibevent(iwdev);
+		break;
 	default:
 		break;
 	}
@@ -757,31 +760,6 @@ void irdma_qp_rem_ref(struct ib_qp *ibqp)
 	complete(&iwqp->free_qp);
 }
 
-void irdma_cq_add_ref(struct ib_cq *ibcq)
-{
-	struct irdma_cq *iwcq = to_iwcq(ibcq);
-
-	refcount_inc(&iwcq->refcnt);
-}
-
-void irdma_cq_rem_ref(struct ib_cq *ibcq)
-{
-	struct ib_device *ibdev = ibcq->device;
-	struct irdma_device *iwdev = to_iwdev(ibdev);
-	struct irdma_cq *iwcq = to_iwcq(ibcq);
-	unsigned long flags;
-
-	spin_lock_irqsave(&iwdev->rf->cqtable_lock, flags);
-	if (!refcount_dec_and_test(&iwcq->refcnt)) {
-		spin_unlock_irqrestore(&iwdev->rf->cqtable_lock, flags);
-		return;
-	}
-
-	iwdev->rf->cq_table[iwcq->cq_num] = NULL;
-	spin_unlock_irqrestore(&iwdev->rf->cqtable_lock, flags);
-	complete(&iwcq->free_cq);
-}
-
 struct ib_device *to_ibdev(struct irdma_sc_dev *dev)
 {
 	return &(container_of(dev, struct irdma_pci_f, sc_dev))->iwdev->ibdev;
@@ -930,7 +908,7 @@ void irdma_terminate_done(struct irdma_sc_qp *qp, int timeout_occurred)
 
 static void irdma_terminate_timeout(struct timer_list *t)
 {
-	struct irdma_qp *iwqp = timer_container_of(iwqp, t, terminate_timer);
+	struct irdma_qp *iwqp = from_timer(iwqp, t, terminate_timer);
 	struct irdma_sc_qp *qp = &iwqp->sc_qp;
 
 	irdma_terminate_done(qp, 1);
@@ -963,9 +941,77 @@ void irdma_terminate_del_timer(struct irdma_sc_qp *qp)
 	int ret;
 
 	iwqp = qp->qp_uk.back_qp;
-	ret = timer_delete(&iwqp->terminate_timer);
+	ret = del_timer(&iwqp->terminate_timer);
 	if (ret)
 		irdma_qp_rem_ref(&iwqp->ibqp);
+}
+
+/**
+ * irdma_cqp_query_fpm_val_cmd - send cqp command for fpm
+ * @dev: function device struct
+ * @val_mem: buffer for fpm
+ * @hmc_fn_id: function id for fpm
+ */
+int irdma_cqp_query_fpm_val_cmd(struct irdma_sc_dev *dev,
+				struct irdma_dma_mem *val_mem, u8 hmc_fn_id)
+{
+	struct irdma_cqp_request *cqp_request;
+	struct cqp_cmds_info *cqp_info;
+	struct irdma_pci_f *rf = dev_to_rf(dev);
+	int status;
+
+	cqp_request = irdma_alloc_and_get_cqp_request(&rf->cqp, true);
+	if (!cqp_request)
+		return -ENOMEM;
+
+	cqp_info = &cqp_request->info;
+	cqp_request->param = NULL;
+	cqp_info->in.u.query_fpm_val.cqp = dev->cqp;
+	cqp_info->in.u.query_fpm_val.fpm_val_pa = val_mem->pa;
+	cqp_info->in.u.query_fpm_val.fpm_val_va = val_mem->va;
+	cqp_info->in.u.query_fpm_val.hmc_fn_id = hmc_fn_id;
+	cqp_info->cqp_cmd = IRDMA_OP_QUERY_FPM_VAL;
+	cqp_info->post_sq = 1;
+	cqp_info->in.u.query_fpm_val.scratch = (uintptr_t)cqp_request;
+
+	status = irdma_handle_cqp_op(rf, cqp_request);
+	irdma_put_cqp_request(&rf->cqp, cqp_request);
+
+	return status;
+}
+
+/**
+ * irdma_cqp_commit_fpm_val_cmd - commit fpm values in hw
+ * @dev: hardware control device structure
+ * @val_mem: buffer with fpm values
+ * @hmc_fn_id: function id for fpm
+ */
+int irdma_cqp_commit_fpm_val_cmd(struct irdma_sc_dev *dev,
+				 struct irdma_dma_mem *val_mem, u8 hmc_fn_id)
+{
+	struct irdma_cqp_request *cqp_request;
+	struct cqp_cmds_info *cqp_info;
+	struct irdma_pci_f *rf = dev_to_rf(dev);
+	int status;
+
+	cqp_request = irdma_alloc_and_get_cqp_request(&rf->cqp, true);
+	if (!cqp_request)
+		return -ENOMEM;
+
+	cqp_info = &cqp_request->info;
+	cqp_request->param = NULL;
+	cqp_info->in.u.commit_fpm_val.cqp = dev->cqp;
+	cqp_info->in.u.commit_fpm_val.fpm_val_pa = val_mem->pa;
+	cqp_info->in.u.commit_fpm_val.fpm_val_va = val_mem->va;
+	cqp_info->in.u.commit_fpm_val.hmc_fn_id = hmc_fn_id;
+	cqp_info->cqp_cmd = IRDMA_OP_COMMIT_FPM_VAL;
+	cqp_info->post_sq = 1;
+	cqp_info->in.u.commit_fpm_val.scratch = (uintptr_t)cqp_request;
+
+	status = irdma_handle_cqp_op(rf, cqp_request);
+	irdma_put_cqp_request(&rf->cqp, cqp_request);
+
+	return status;
 }
 
 /**
@@ -1274,17 +1320,65 @@ void irdma_ieq_mpa_crc_ae(struct irdma_sc_dev *dev, struct irdma_sc_qp *qp)
 }
 
 /**
+ * irdma_init_hash_desc - initialize hash for crc calculation
+ * @desc: cryption type
+ */
+int irdma_init_hash_desc(struct shash_desc **desc)
+{
+	struct crypto_shash *tfm;
+	struct shash_desc *tdesc;
+
+	tfm = crypto_alloc_shash("crc32c", 0, 0);
+	if (IS_ERR(tfm))
+		return -EINVAL;
+
+	tdesc = kzalloc(sizeof(*tdesc) + crypto_shash_descsize(tfm),
+			GFP_KERNEL);
+	if (!tdesc) {
+		crypto_free_shash(tfm);
+		return -EINVAL;
+	}
+
+	tdesc->tfm = tfm;
+	*desc = tdesc;
+
+	return 0;
+}
+
+/**
+ * irdma_free_hash_desc - free hash desc
+ * @desc: to be freed
+ */
+void irdma_free_hash_desc(struct shash_desc *desc)
+{
+	if (desc) {
+		crypto_free_shash(desc->tfm);
+		kfree(desc);
+	}
+}
+
+/**
  * irdma_ieq_check_mpacrc - check if mpa crc is OK
+ * @desc: desc for hash
  * @addr: address of buffer for crc
  * @len: length of buffer
  * @val: value to be compared
  */
-int irdma_ieq_check_mpacrc(const void *addr, u32 len, u32 val)
+int irdma_ieq_check_mpacrc(struct shash_desc *desc, void *addr, u32 len,
+			   u32 val)
 {
-	if ((__force u32)cpu_to_le32(~crc32c(~0, addr, len)) != val)
-		return -EINVAL;
+	u32 crc = 0;
+	int ret;
+	int ret_code = 0;
 
-	return 0;
+	crypto_shash_init(desc);
+	ret = crypto_shash_update(desc, addr, len);
+	if (!ret)
+		crypto_shash_final(desc, (u8 *)&crc);
+	if (crc != val)
+		ret_code = -EINVAL;
+
+	return ret_code;
 }
 
 /**
@@ -1537,13 +1631,13 @@ int irdma_puda_get_tcpip_info(struct irdma_puda_cmpl_info *info,
 static void irdma_hw_stats_timeout(struct timer_list *t)
 {
 	struct irdma_vsi_pestat *pf_devstat =
-		timer_container_of(pf_devstat, t, stats_timer);
+		from_timer(pf_devstat, t, stats_timer);
 	struct irdma_sc_vsi *sc_vsi = pf_devstat->vsi;
 
-	if (sc_vsi->dev->hw_attrs.uk_attrs.hw_rev >= IRDMA_GEN_2)
-		irdma_cqp_gather_stats_cmd(sc_vsi->dev, sc_vsi->pestat, false);
-	else
+	if (sc_vsi->dev->hw_attrs.uk_attrs.hw_rev == IRDMA_GEN_1)
 		irdma_cqp_gather_stats_gen1(sc_vsi->dev, sc_vsi->pestat);
+	else
+		irdma_cqp_gather_stats_cmd(sc_vsi->dev, sc_vsi->pestat, false);
 
 	mod_timer(&pf_devstat->stats_timer,
 		  jiffies + msecs_to_jiffies(STATS_TIMER_DELAY));
@@ -1570,7 +1664,7 @@ void irdma_hw_stats_stop_timer(struct irdma_sc_vsi *vsi)
 {
 	struct irdma_vsi_pestat *devstat = vsi->pestat;
 
-	timer_delete_sync(&devstat->stats_timer);
+	del_timer_sync(&devstat->stats_timer);
 }
 
 /**
@@ -1592,28 +1686,164 @@ void irdma_cqp_gather_stats_gen1(struct irdma_sc_dev *dev,
 {
 	struct irdma_gather_stats *gather_stats =
 		pestat->gather_info.gather_stats_va;
-	const struct irdma_hw_stat_map *map = dev->hw_stats_map;
-	u16 max_stats_idx = dev->hw_attrs.max_stat_idx;
 	u32 stats_inst_offset_32;
 	u32 stats_inst_offset_64;
-	u64 new_val;
-	u16 i;
 
 	stats_inst_offset_32 = (pestat->gather_info.use_stats_inst) ?
-				pestat->gather_info.stats_inst_index :
-				pestat->hw->hmc.hmc_fn_id;
+				       pestat->gather_info.stats_inst_index :
+				       pestat->hw->hmc.hmc_fn_id;
 	stats_inst_offset_32 *= 4;
 	stats_inst_offset_64 = stats_inst_offset_32 * 2;
 
-	for (i = 0; i < max_stats_idx; i++) {
-		if (map[i].bitmask <= IRDMA_MAX_STATS_32)
-			new_val = rd32(dev->hw,
-				       dev->hw_stats_regs[i] + stats_inst_offset_32);
-		else
-			new_val = rd64(dev->hw,
-				       dev->hw_stats_regs[i] + stats_inst_offset_64);
-		gather_stats->val[map[i].byteoff / sizeof(u64)] = new_val;
-	}
+	gather_stats->rxvlanerr =
+		rd32(dev->hw,
+		     dev->hw_stats_regs_32[IRDMA_HW_STAT_INDEX_RXVLANERR]
+		     + stats_inst_offset_32);
+	gather_stats->ip4rxdiscard =
+		rd32(dev->hw,
+		     dev->hw_stats_regs_32[IRDMA_HW_STAT_INDEX_IP4RXDISCARD]
+		     + stats_inst_offset_32);
+	gather_stats->ip4rxtrunc =
+		rd32(dev->hw,
+		     dev->hw_stats_regs_32[IRDMA_HW_STAT_INDEX_IP4RXTRUNC]
+		     + stats_inst_offset_32);
+	gather_stats->ip4txnoroute =
+		rd32(dev->hw,
+		     dev->hw_stats_regs_32[IRDMA_HW_STAT_INDEX_IP4TXNOROUTE]
+		     + stats_inst_offset_32);
+	gather_stats->ip6rxdiscard =
+		rd32(dev->hw,
+		     dev->hw_stats_regs_32[IRDMA_HW_STAT_INDEX_IP6RXDISCARD]
+		     + stats_inst_offset_32);
+	gather_stats->ip6rxtrunc =
+		rd32(dev->hw,
+		     dev->hw_stats_regs_32[IRDMA_HW_STAT_INDEX_IP6RXTRUNC]
+		     + stats_inst_offset_32);
+	gather_stats->ip6txnoroute =
+		rd32(dev->hw,
+		     dev->hw_stats_regs_32[IRDMA_HW_STAT_INDEX_IP6TXNOROUTE]
+		     + stats_inst_offset_32);
+	gather_stats->tcprtxseg =
+		rd32(dev->hw,
+		     dev->hw_stats_regs_32[IRDMA_HW_STAT_INDEX_TCPRTXSEG]
+		     + stats_inst_offset_32);
+	gather_stats->tcprxopterr =
+		rd32(dev->hw,
+		     dev->hw_stats_regs_32[IRDMA_HW_STAT_INDEX_TCPRXOPTERR]
+		     + stats_inst_offset_32);
+
+	gather_stats->ip4rxocts =
+		rd64(dev->hw,
+		     dev->hw_stats_regs_64[IRDMA_HW_STAT_INDEX_IP4RXOCTS]
+		     + stats_inst_offset_64);
+	gather_stats->ip4rxpkts =
+		rd64(dev->hw,
+		     dev->hw_stats_regs_64[IRDMA_HW_STAT_INDEX_IP4RXPKTS]
+		     + stats_inst_offset_64);
+	gather_stats->ip4txfrag =
+		rd64(dev->hw,
+		     dev->hw_stats_regs_64[IRDMA_HW_STAT_INDEX_IP4RXFRAGS]
+		     + stats_inst_offset_64);
+	gather_stats->ip4rxmcpkts =
+		rd64(dev->hw,
+		     dev->hw_stats_regs_64[IRDMA_HW_STAT_INDEX_IP4RXMCPKTS]
+		     + stats_inst_offset_64);
+	gather_stats->ip4txocts =
+		rd64(dev->hw,
+		     dev->hw_stats_regs_64[IRDMA_HW_STAT_INDEX_IP4TXOCTS]
+		     + stats_inst_offset_64);
+	gather_stats->ip4txpkts =
+		rd64(dev->hw,
+		     dev->hw_stats_regs_64[IRDMA_HW_STAT_INDEX_IP4TXPKTS]
+		     + stats_inst_offset_64);
+	gather_stats->ip4txfrag =
+		rd64(dev->hw,
+		     dev->hw_stats_regs_64[IRDMA_HW_STAT_INDEX_IP4TXFRAGS]
+		     + stats_inst_offset_64);
+	gather_stats->ip4txmcpkts =
+		rd64(dev->hw,
+		     dev->hw_stats_regs_64[IRDMA_HW_STAT_INDEX_IP4TXMCPKTS]
+		     + stats_inst_offset_64);
+	gather_stats->ip6rxocts =
+		rd64(dev->hw,
+		     dev->hw_stats_regs_64[IRDMA_HW_STAT_INDEX_IP6RXOCTS]
+		     + stats_inst_offset_64);
+	gather_stats->ip6rxpkts =
+		rd64(dev->hw,
+		     dev->hw_stats_regs_64[IRDMA_HW_STAT_INDEX_IP6RXPKTS]
+		     + stats_inst_offset_64);
+	gather_stats->ip6txfrags =
+		rd64(dev->hw,
+		     dev->hw_stats_regs_64[IRDMA_HW_STAT_INDEX_IP6RXFRAGS]
+		     + stats_inst_offset_64);
+	gather_stats->ip6rxmcpkts =
+		rd64(dev->hw,
+		     dev->hw_stats_regs_64[IRDMA_HW_STAT_INDEX_IP6RXMCPKTS]
+		     + stats_inst_offset_64);
+	gather_stats->ip6txocts =
+		rd64(dev->hw,
+		     dev->hw_stats_regs_64[IRDMA_HW_STAT_INDEX_IP6TXOCTS]
+		     + stats_inst_offset_64);
+	gather_stats->ip6txpkts =
+		rd64(dev->hw,
+		     dev->hw_stats_regs_64[IRDMA_HW_STAT_INDEX_IP6TXPKTS]
+		     + stats_inst_offset_64);
+	gather_stats->ip6txfrags =
+		rd64(dev->hw,
+		     dev->hw_stats_regs_64[IRDMA_HW_STAT_INDEX_IP6TXFRAGS]
+		     + stats_inst_offset_64);
+	gather_stats->ip6txmcpkts =
+		rd64(dev->hw,
+		     dev->hw_stats_regs_64[IRDMA_HW_STAT_INDEX_IP6TXMCPKTS]
+		     + stats_inst_offset_64);
+	gather_stats->tcprxsegs =
+		rd64(dev->hw,
+		     dev->hw_stats_regs_64[IRDMA_HW_STAT_INDEX_TCPRXSEGS]
+		     + stats_inst_offset_64);
+	gather_stats->tcptxsegs =
+		rd64(dev->hw,
+		     dev->hw_stats_regs_64[IRDMA_HW_STAT_INDEX_TCPTXSEG]
+		     + stats_inst_offset_64);
+	gather_stats->rdmarxrds =
+		rd64(dev->hw,
+		     dev->hw_stats_regs_64[IRDMA_HW_STAT_INDEX_RDMARXRDS]
+		     + stats_inst_offset_64);
+	gather_stats->rdmarxsnds =
+		rd64(dev->hw,
+		     dev->hw_stats_regs_64[IRDMA_HW_STAT_INDEX_RDMARXSNDS]
+		     + stats_inst_offset_64);
+	gather_stats->rdmarxwrs =
+		rd64(dev->hw,
+		     dev->hw_stats_regs_64[IRDMA_HW_STAT_INDEX_RDMARXWRS]
+		     + stats_inst_offset_64);
+	gather_stats->rdmatxrds =
+		rd64(dev->hw,
+		     dev->hw_stats_regs_64[IRDMA_HW_STAT_INDEX_RDMATXRDS]
+		     + stats_inst_offset_64);
+	gather_stats->rdmatxsnds =
+		rd64(dev->hw,
+		     dev->hw_stats_regs_64[IRDMA_HW_STAT_INDEX_RDMATXSNDS]
+		     + stats_inst_offset_64);
+	gather_stats->rdmatxwrs =
+		rd64(dev->hw,
+		     dev->hw_stats_regs_64[IRDMA_HW_STAT_INDEX_RDMATXWRS]
+		     + stats_inst_offset_64);
+	gather_stats->rdmavbn =
+		rd64(dev->hw,
+		     dev->hw_stats_regs_64[IRDMA_HW_STAT_INDEX_RDMAVBND]
+		     + stats_inst_offset_64);
+	gather_stats->rdmavinv =
+		rd64(dev->hw,
+		     dev->hw_stats_regs_64[IRDMA_HW_STAT_INDEX_RDMAVINV]
+		     + stats_inst_offset_64);
+	gather_stats->udprxpkts =
+		rd64(dev->hw,
+		     dev->hw_stats_regs_64[IRDMA_HW_STAT_INDEX_UDPRXPKTS]
+		     + stats_inst_offset_64);
+	gather_stats->udptxpkts =
+		rd64(dev->hw,
+		     dev->hw_stats_regs_64[IRDMA_HW_STAT_INDEX_UDPTXPKTS]
+		     + stats_inst_offset_64);
 
 	irdma_process_stats(pestat);
 }

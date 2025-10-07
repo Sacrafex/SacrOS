@@ -15,6 +15,7 @@
 #include <linux/leds.h>
 #include <linux/module.h>
 #include <linux/of.h>
+#include <linux/of_device.h>
 
 /* Used to indicate a device has no such register */
 #define IS31FL32XX_REG_NONE 0xFF
@@ -363,9 +364,10 @@ static struct is31fl32xx_led_data *is31fl32xx_find_led_data(
 static int is31fl32xx_parse_dt(struct device *dev,
 			       struct is31fl32xx_priv *priv)
 {
+	struct device_node *child;
 	int ret = 0;
 
-	for_each_available_child_of_node_scoped(dev_of_node(dev), child) {
+	for_each_available_child_of_node(dev_of_node(dev), child) {
 		struct led_init_data init_data = {};
 		struct is31fl32xx_led_data *led_data =
 			&priv->leds[priv->num_leds];
@@ -375,7 +377,7 @@ static int is31fl32xx_parse_dt(struct device *dev,
 
 		ret = is31fl32xx_parse_child_dt(dev, child, led_data);
 		if (ret)
-			return ret;
+			goto err;
 
 		/* Detect if channel is already in use by another child */
 		other_led_data = is31fl32xx_find_led_data(priv,
@@ -384,7 +386,8 @@ static int is31fl32xx_parse_dt(struct device *dev,
 			dev_err(dev,
 				"Node %pOF 'reg' conflicts with another LED\n",
 				child);
-			return -EINVAL;
+			ret = -EINVAL;
+			goto err;
 		}
 
 		init_data.fwnode = of_fwnode_handle(child);
@@ -394,13 +397,17 @@ static int is31fl32xx_parse_dt(struct device *dev,
 		if (ret) {
 			dev_err(dev, "Failed to register LED for %pOF: %d\n",
 				child, ret);
-			return ret;
+			goto err;
 		}
 
 		priv->num_leds++;
 	}
 
 	return 0;
+
+err:
+	of_node_put(child);
+	return ret;
 }
 
 static const struct of_device_id of_is31fl32xx_match[] = {
@@ -415,7 +422,8 @@ static const struct of_device_id of_is31fl32xx_match[] = {
 
 MODULE_DEVICE_TABLE(of, of_is31fl32xx_match);
 
-static int is31fl32xx_probe(struct i2c_client *client)
+static int is31fl32xx_probe(struct i2c_client *client,
+			    const struct i2c_device_id *id)
 {
 	const struct is31fl32xx_chipdef *cdef;
 	struct device *dev = &client->dev;

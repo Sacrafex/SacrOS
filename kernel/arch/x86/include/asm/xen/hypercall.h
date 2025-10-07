@@ -232,12 +232,14 @@ static __always_inline void __xen_stac(void)
 	 * Suppress objtool seeing the STAC/CLAC and getting confused about it
 	 * calling random code with AC=1.
 	 */
-	asm volatile(ASM_STAC_UNSAFE ::: "memory", "flags");
+	asm volatile(ANNOTATE_IGNORE_ALTERNATIVE
+		     ASM_STAC ::: "memory", "flags");
 }
 
 static __always_inline void __xen_clac(void)
 {
-	asm volatile(ASM_CLAC_UNSAFE ::: "memory", "flags");
+	asm volatile(ANNOTATE_IGNORE_ALTERNATIVE
+		     ASM_CLAC ::: "memory", "flags");
 }
 
 static inline long
@@ -389,7 +391,7 @@ MULTI_stack_switch(struct multicall_entry *mcl,
 }
 #endif
 
-static __always_inline int
+static inline int
 HYPERVISOR_sched_op(int cmd, void *arg)
 {
 	return _hypercall2(int, sched_op, cmd, arg);

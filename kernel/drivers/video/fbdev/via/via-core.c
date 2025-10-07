@@ -9,10 +9,9 @@
  * Core code for the Via multifunction framebuffer device.
  */
 #include <linux/aperture.h>
-#include <linux/export.h>
 #include <linux/via-core.h>
 #include <linux/via_i2c.h>
-#include "via-gpio.h"
+#include <linux/via-gpio.h>
 #include "global.h"
 
 #include <linux/module.h>
@@ -701,7 +700,14 @@ static const struct pci_device_id via_pci_table[] = {
 	  .driver_data = UNICHROME_VX900 },
 	{ }
 };
-MODULE_DEVICE_TABLE(pci, via_pci_table);
+
+static const struct pci_device_id via_pci_autoload_table[] __initconst = {
+	/* OLPC XO 1.5 */
+	{ PCI_DEVICE(PCI_VENDOR_ID_VIA, UNICHROME_VX855_DID),
+	  .subvendor = 0x152d, .subdevice = 0x0833 },
+	{ }
+};
+MODULE_DEVICE_TABLE(pci, via_pci_autoload_table);
 
 static const struct dev_pm_ops via_pm_ops = {
 #ifdef CONFIG_PM_SLEEP
@@ -725,9 +731,6 @@ static struct pci_driver via_driver = {
 static int __init via_core_init(void)
 {
 	int ret;
-
-	if (fb_modesetting_disabled("viafb"))
-		return -ENODEV;
 
 	ret = viafb_init();
 	if (ret)

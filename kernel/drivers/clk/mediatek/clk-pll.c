@@ -23,14 +23,41 @@
 #define CON0_BASE_EN		BIT(0)
 #define CON0_PWR_ON		BIT(0)
 #define CON0_ISO_EN		BIT(1)
-#define PCW_CHG_BIT		31
+#define PCW_CHG_MASK		BIT(31)
 
 #define AUDPLL_TUNER_EN		BIT(31)
+
+#define POSTDIV_MASK		0x7
 
 /* default 7 bits integer, can be overridden with pcwibits. */
 #define INTEGER_BITS		7
 
-int mtk_pll_is_prepared(struct clk_hw *hw)
+/*
+ * MediaTek PLLs are configured through their pcw value. The pcw value describes
+ * a divider in the PLL feedback loop which consists of 7 bits for the integer
+ * part and the remaining bits (if present) for the fractional part. Also they
+ * have a 3 bit power-of-two post divider.
+ */
+
+struct mtk_clk_pll {
+	struct clk_hw	hw;
+	void __iomem	*base_addr;
+	void __iomem	*pd_addr;
+	void __iomem	*pwr_addr;
+	void __iomem	*tuner_addr;
+	void __iomem	*tuner_en_addr;
+	void __iomem	*pcw_addr;
+	void __iomem	*pcw_chg_addr;
+	void __iomem	*en_addr;
+	const struct mtk_pll_data *data;
+};
+
+static inline struct mtk_clk_pll *to_mtk_clk_pll(struct clk_hw *hw)
+{
+	return container_of(hw, struct mtk_clk_pll, hw);
+}
+
+static int mtk_pll_is_prepared(struct clk_hw *hw)
 {
 	struct mtk_clk_pll *pll = to_mtk_clk_pll(hw);
 
@@ -114,8 +141,7 @@ static void mtk_pll_set_rate_regs(struct mtk_clk_pll *pll, u32 pcw,
 			pll->data->pcw_shift);
 	val |= pcw << pll->data->pcw_shift;
 	writel(val, pll->pcw_addr);
-	chg = readl(pll->pcw_chg_addr) |
-	      BIT(pll->data->pcw_chg_bit ? : PCW_CHG_BIT);
+	chg = readl(pll->pcw_chg_addr) | PCW_CHG_MASK;
 	writel(chg, pll->pcw_chg_addr);
 	if (pll->tuner_addr)
 		writel(val + 1, pll->tuner_addr);
@@ -135,8 +161,8 @@ static void mtk_pll_set_rate_regs(struct mtk_clk_pll *pll, u32 pcw,
  * @fin:	The input frequency
  *
  */
-void mtk_pll_calc_values(struct mtk_clk_pll *pll, u32 *pcw, u32 *postdiv,
-			 u32 freq, u32 fin)
+static void mtk_pll_calc_values(struct mtk_clk_pll *pll, u32 *pcw, u32 *postdiv,
+		u32 freq, u32 fin)
 {
 	unsigned long fmin = pll->data->fmin ? pll->data->fmin : (1000 * MHZ);
 	const struct mtk_pll_div_table *div_table = pll->data->div_table;
@@ -172,8 +198,8 @@ void mtk_pll_calc_values(struct mtk_clk_pll *pll, u32 *pcw, u32 *postdiv,
 	*pcw = (u32)_pcw;
 }
 
-int mtk_pll_set_rate(struct clk_hw *hw, unsigned long rate,
-		     unsigned long parent_rate)
+static int mtk_pll_set_rate(struct clk_hw *hw, unsigned long rate,
+		unsigned long parent_rate)
 {
 	struct mtk_clk_pll *pll = to_mtk_clk_pll(hw);
 	u32 pcw = 0;
@@ -185,7 +211,8 @@ int mtk_pll_set_rate(struct clk_hw *hw, unsigned long rate,
 	return 0;
 }
 
-unsigned long mtk_pll_recalc_rate(struct clk_hw *hw, unsigned long parent_rate)
+static unsigned long mtk_pll_recalc_rate(struct clk_hw *hw,
+		unsigned long parent_rate)
 {
 	struct mtk_clk_pll *pll = to_mtk_clk_pll(hw);
 	u32 postdiv;
@@ -200,8 +227,8 @@ unsigned long mtk_pll_recalc_rate(struct clk_hw *hw, unsigned long parent_rate)
 	return __mtk_pll_recalc_rate(pll, parent_rate, pcw, postdiv);
 }
 
-long mtk_pll_round_rate(struct clk_hw *hw, unsigned long rate,
-			unsigned long *prate)
+static long mtk_pll_round_rate(struct clk_hw *hw, unsigned long rate,
+		unsigned long *prate)
 {
 	struct mtk_clk_pll *pll = to_mtk_clk_pll(hw);
 	u32 pcw = 0;
@@ -212,7 +239,7 @@ long mtk_pll_round_rate(struct clk_hw *hw, unsigned long rate,
 	return __mtk_pll_recalc_rate(pll, *prate, pcw, postdiv);
 }
 
-int mtk_pll_prepare(struct clk_hw *hw)
+static int mtk_pll_prepare(struct clk_hw *hw)
 {
 	struct mtk_clk_pll *pll = to_mtk_clk_pll(hw);
 	u32 r;
@@ -246,7 +273,7 @@ int mtk_pll_prepare(struct clk_hw *hw)
 	return 0;
 }
 
-void mtk_pll_unprepare(struct clk_hw *hw)
+static void mtk_pll_unprepare(struct clk_hw *hw)
 {
 	struct mtk_clk_pll *pll = to_mtk_clk_pll(hw);
 	u32 r;
@@ -274,7 +301,7 @@ void mtk_pll_unprepare(struct clk_hw *hw)
 	writel(r, pll->pwr_addr);
 }
 
-const struct clk_ops mtk_pll_ops = {
+static const struct clk_ops mtk_pll_ops = {
 	.is_prepared	= mtk_pll_is_prepared,
 	.prepare	= mtk_pll_prepare,
 	.unprepare	= mtk_pll_unprepare,
@@ -283,14 +310,17 @@ const struct clk_ops mtk_pll_ops = {
 	.set_rate	= mtk_pll_set_rate,
 };
 
-struct clk_hw *mtk_clk_register_pll_ops(struct mtk_clk_pll *pll,
-					const struct mtk_pll_data *data,
-					void __iomem *base,
-					const struct clk_ops *pll_ops)
+static struct clk_hw *mtk_clk_register_pll(const struct mtk_pll_data *data,
+		void __iomem *base)
 {
+	struct mtk_clk_pll *pll;
 	struct clk_init_data init = {};
 	int ret;
 	const char *parent_name = "clk26m";
+
+	pll = kzalloc(sizeof(*pll), GFP_KERNEL);
+	if (!pll)
+		return ERR_PTR(-ENOMEM);
 
 	pll->base_addr = base + data->reg;
 	pll->pwr_addr = base + data->pwr_reg;
@@ -313,7 +343,7 @@ struct clk_hw *mtk_clk_register_pll_ops(struct mtk_clk_pll *pll,
 
 	init.name = data->name;
 	init.flags = (data->flags & PLL_AO) ? CLK_IS_CRITICAL : 0;
-	init.ops = pll_ops;
+	init.ops = &mtk_pll_ops;
 	if (data->parent_name)
 		init.parent_names = &data->parent_name;
 	else
@@ -322,30 +352,15 @@ struct clk_hw *mtk_clk_register_pll_ops(struct mtk_clk_pll *pll,
 
 	ret = clk_hw_register(NULL, &pll->hw);
 
-	if (ret)
+	if (ret) {
+		kfree(pll);
 		return ERR_PTR(ret);
+	}
 
 	return &pll->hw;
 }
 
-struct clk_hw *mtk_clk_register_pll(const struct mtk_pll_data *data,
-				    void __iomem *base)
-{
-	struct mtk_clk_pll *pll;
-	struct clk_hw *hw;
-
-	pll = kzalloc(sizeof(*pll), GFP_KERNEL);
-	if (!pll)
-		return ERR_PTR(-ENOMEM);
-
-	hw = mtk_clk_register_pll_ops(pll, data, base, &mtk_pll_ops);
-	if (IS_ERR(hw))
-		kfree(pll);
-
-	return hw;
-}
-
-void mtk_clk_unregister_pll(struct clk_hw *hw)
+static void mtk_clk_unregister_pll(struct clk_hw *hw)
 {
 	struct mtk_clk_pll *pll;
 
@@ -408,8 +423,8 @@ err:
 }
 EXPORT_SYMBOL_GPL(mtk_clk_register_plls);
 
-__iomem void *mtk_clk_pll_get_base(struct clk_hw *hw,
-				   const struct mtk_pll_data *data)
+static __iomem void *mtk_clk_pll_get_base(struct clk_hw *hw,
+					  const struct mtk_pll_data *data)
 {
 	struct mtk_clk_pll *pll = to_mtk_clk_pll(hw);
 

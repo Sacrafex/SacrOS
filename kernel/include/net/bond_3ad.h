@@ -231,10 +231,7 @@ typedef struct port {
 	mux_states_t sm_mux_state;	/* state machine mux state */
 	u16 sm_mux_timer_counter;	/* state machine mux timer counter */
 	tx_states_t sm_tx_state;	/* state machine tx state */
-	u16 sm_tx_timer_counter;	/* state machine tx timer counter
-					 * (always on - enter to transmit
-					 *  state 3 time per second)
-					 */
+	u16 sm_tx_timer_counter;	/* state machine tx timer counter(allways on - enter to transmit state 3 time per second) */
 	u16 sm_churn_actor_timer_counter;
 	u16 sm_churn_partner_timer_counter;
 	u32 churn_actor_count;
@@ -306,6 +303,7 @@ int  __bond_3ad_get_active_agg_info(struct bonding *bond,
 int bond_3ad_lacpdu_recv(const struct sk_buff *skb, struct bonding *bond,
 			 struct slave *slave);
 int bond_3ad_set_carrier(struct bonding *bond);
+void bond_3ad_update_lacp_active(struct bonding *bond);
 void bond_3ad_update_lacp_rate(struct bonding *bond);
 void bond_3ad_update_lacp_active(struct bonding *bond);
 void bond_3ad_update_ad_actor_settings(struct bonding *bond);

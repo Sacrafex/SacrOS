@@ -16,12 +16,9 @@
 #include <uapi/linux/io_uring.h>
 
 #include "io_uring.h"
-#include "tctx.h"
-#include "napi.h"
 #include "sqpoll.h"
 
 #define IORING_SQPOLL_CAP_ENTRIES_VALUE 8
-#define IORING_TW_CAP_ENTRIES_VALUE	32
 
 enum {
 	IO_SQ_THREAD_SHOULD_STOP = 0,
@@ -31,7 +28,7 @@ enum {
 void io_sq_thread_unpark(struct io_sq_data *sqd)
 	__releases(&sqd->lock)
 {
-	WARN_ON_ONCE(sqpoll_task_locked(sqd) == current);
+	WARN_ON_ONCE(sqd->thread == current);
 
 	/*
 	 * Do the dance but not conditional clear_bit() because it'd race with
@@ -41,38 +38,29 @@ void io_sq_thread_unpark(struct io_sq_data *sqd)
 	if (atomic_dec_return(&sqd->park_pending))
 		set_bit(IO_SQ_THREAD_SHOULD_PARK, &sqd->state);
 	mutex_unlock(&sqd->lock);
-	wake_up(&sqd->wait);
 }
 
 void io_sq_thread_park(struct io_sq_data *sqd)
 	__acquires(&sqd->lock)
 {
-	struct task_struct *tsk;
+	WARN_ON_ONCE(sqd->thread == current);
 
 	atomic_inc(&sqd->park_pending);
 	set_bit(IO_SQ_THREAD_SHOULD_PARK, &sqd->state);
 	mutex_lock(&sqd->lock);
-
-	tsk = sqpoll_task_locked(sqd);
-	if (tsk) {
-		WARN_ON_ONCE(tsk == current);
-		wake_up_process(tsk);
-	}
+	if (sqd->thread)
+		wake_up_process(sqd->thread);
 }
 
 void io_sq_thread_stop(struct io_sq_data *sqd)
 {
-	struct task_struct *tsk;
-
+	WARN_ON_ONCE(sqd->thread == current);
 	WARN_ON_ONCE(test_bit(IO_SQ_THREAD_SHOULD_STOP, &sqd->state));
 
 	set_bit(IO_SQ_THREAD_SHOULD_STOP, &sqd->state);
 	mutex_lock(&sqd->lock);
-	tsk = sqpoll_task_locked(sqd);
-	if (tsk) {
-		WARN_ON_ONCE(tsk == current);
-		wake_up_process(tsk);
-	}
+	if (sqd->thread)
+		wake_up_process(sqd->thread);
 	mutex_unlock(&sqd->lock);
 	wait_for_completion(&sqd->exited);
 }
@@ -116,21 +104,29 @@ static struct io_sq_data *io_attach_sq_data(struct io_uring_params *p)
 {
 	struct io_ring_ctx *ctx_attach;
 	struct io_sq_data *sqd;
-	CLASS(fd, f)(p->wq_fd);
+	struct fd f;
 
-	if (fd_empty(f))
+	f = fdget(p->wq_fd);
+	if (!f.file)
 		return ERR_PTR(-ENXIO);
-	if (!io_is_uring_fops(fd_file(f)))
+	if (!io_is_uring_fops(f.file)) {
+		fdput(f);
 		return ERR_PTR(-EINVAL);
+	}
 
-	ctx_attach = fd_file(f)->private_data;
+	ctx_attach = f.file->private_data;
 	sqd = ctx_attach->sq_data;
-	if (!sqd)
+	if (!sqd) {
+		fdput(f);
 		return ERR_PTR(-EINVAL);
-	if (sqd->task_tgid != current->tgid)
+	}
+	if (sqd->task_tgid != current->tgid) {
+		fdput(f);
 		return ERR_PTR(-EPERM);
+	}
 
 	refcount_inc(&sqd->refs);
+	fdput(f);
 	return sqd;
 }
 
@@ -179,7 +175,7 @@ static int __io_sq_thread(struct io_ring_ctx *ctx, bool cap_entries)
 	if (cap_entries && to_submit > IORING_SQPOLL_CAP_ENTRIES_VALUE)
 		to_submit = IORING_SQPOLL_CAP_ENTRIES_VALUE;
 
-	if (to_submit || !wq_list_empty(&ctx->iopoll_list)) {
+	if (!wq_list_empty(&ctx->iopoll_list) || to_submit) {
 		const struct cred *creds = NULL;
 
 		if (ctx->sq_creds != current_cred())
@@ -217,86 +213,27 @@ static bool io_sqd_handle_event(struct io_sq_data *sqd)
 		mutex_unlock(&sqd->lock);
 		if (signal_pending(current))
 			did_sig = get_signal(&ksig);
-		wait_event(sqd->wait, !atomic_read(&sqd->park_pending));
+		cond_resched();
 		mutex_lock(&sqd->lock);
-		sqd->sq_cpu = raw_smp_processor_id();
 	}
 	return did_sig || test_bit(IO_SQ_THREAD_SHOULD_STOP, &sqd->state);
 }
 
-/*
- * Run task_work, processing the retry_list first. The retry_list holds
- * entries that we passed on in the previous run, if we had more task_work
- * than we were asked to process. Newly queued task_work isn't run until the
- * retry list has been fully processed.
- */
-static unsigned int io_sq_tw(struct llist_node **retry_list, int max_entries)
-{
-	struct io_uring_task *tctx = current->io_uring;
-	unsigned int count = 0;
-
-	if (*retry_list) {
-		*retry_list = io_handle_tw_list(*retry_list, &count, max_entries);
-		if (count >= max_entries)
-			goto out;
-		max_entries -= count;
-	}
-	*retry_list = tctx_task_work_run(tctx, max_entries, &count);
-out:
-	if (task_work_pending(current))
-		task_work_run();
-	return count;
-}
-
-static bool io_sq_tw_pending(struct llist_node *retry_list)
-{
-	struct io_uring_task *tctx = current->io_uring;
-
-	return retry_list || !llist_empty(&tctx->task_list);
-}
-
-static void io_sq_update_worktime(struct io_sq_data *sqd, struct rusage *start)
-{
-	struct rusage end;
-
-	getrusage(current, RUSAGE_SELF, &end);
-	end.ru_stime.tv_sec -= start->ru_stime.tv_sec;
-	end.ru_stime.tv_usec -= start->ru_stime.tv_usec;
-
-	sqd->work_time += end.ru_stime.tv_usec + end.ru_stime.tv_sec * 1000000;
-}
-
 static int io_sq_thread(void *data)
 {
-	struct llist_node *retry_list = NULL;
 	struct io_sq_data *sqd = data;
 	struct io_ring_ctx *ctx;
-	struct rusage start;
 	unsigned long timeout = 0;
-	char buf[TASK_COMM_LEN] = {};
+	char buf[TASK_COMM_LEN];
 	DEFINE_WAIT(wait);
-
-	/* offload context creation failed, just exit */
-	if (!current->io_uring) {
-		mutex_lock(&sqd->lock);
-		rcu_assign_pointer(sqd->thread, NULL);
-		put_task_struct(current);
-		mutex_unlock(&sqd->lock);
-		goto err_out;
-	}
 
 	snprintf(buf, sizeof(buf), "iou-sqp-%d", sqd->task_pid);
 	set_task_comm(current, buf);
 
-	/* reset to our pid after we've set task_comm, for fdinfo */
-	sqd->task_pid = current->pid;
-
-	if (sqd->sq_cpu != -1) {
+	if (sqd->sq_cpu != -1)
 		set_cpus_allowed_ptr(current, cpumask_of(sqd->sq_cpu));
-	} else {
+	else
 		set_cpus_allowed_ptr(current, cpu_online_mask);
-		sqd->sq_cpu = raw_smp_processor_id();
-	}
 
 	/*
 	 * Force audit context to get setup, in case we do prep side async
@@ -317,36 +254,28 @@ static int io_sq_thread(void *data)
 		}
 
 		cap_entries = !list_is_singular(&sqd->ctx_list);
-		getrusage(current, RUSAGE_SELF, &start);
 		list_for_each_entry(ctx, &sqd->ctx_list, sqd_list) {
 			int ret = __io_sq_thread(ctx, cap_entries);
 
 			if (!sqt_spin && (ret > 0 || !wq_list_empty(&ctx->iopoll_list)))
 				sqt_spin = true;
 		}
-		if (io_sq_tw(&retry_list, IORING_TW_CAP_ENTRIES_VALUE))
+		if (io_run_task_work())
 			sqt_spin = true;
 
-		list_for_each_entry(ctx, &sqd->ctx_list, sqd_list)
-			if (io_napi(ctx))
-				io_napi_sqpoll_busy_poll(ctx);
-
 		if (sqt_spin || !time_after(jiffies, timeout)) {
-			if (sqt_spin) {
-				io_sq_update_worktime(sqd, &start);
+			if (sqt_spin)
 				timeout = jiffies + sqd->sq_thread_idle;
-			}
 			if (unlikely(need_resched())) {
 				mutex_unlock(&sqd->lock);
 				cond_resched();
 				mutex_lock(&sqd->lock);
-				sqd->sq_cpu = raw_smp_processor_id();
 			}
 			continue;
 		}
 
 		prepare_to_wait(&sqd->wait, &wait, TASK_INTERRUPTIBLE);
-		if (!io_sqd_events_pending(sqd) && !io_sq_tw_pending(retry_list)) {
+		if (!io_sqd_events_pending(sqd) && !task_work_pending(current)) {
 			bool needs_sched = true;
 
 			list_for_each_entry(ctx, &sqd->ctx_list, sqd_list) {
@@ -374,7 +303,6 @@ static int io_sq_thread(void *data)
 				mutex_unlock(&sqd->lock);
 				schedule();
 				mutex_lock(&sqd->lock);
-				sqd->sq_cpu = raw_smp_processor_id();
 			}
 			list_for_each_entry(ctx, &sqd->ctx_list, sqd_list)
 				atomic_andnot(IORING_SQ_NEED_WAKEUP,
@@ -385,22 +313,18 @@ static int io_sq_thread(void *data)
 		timeout = jiffies + sqd->sq_thread_idle;
 	}
 
-	if (retry_list)
-		io_sq_tw(&retry_list, UINT_MAX);
-
 	io_uring_cancel_generic(true, sqd);
-	rcu_assign_pointer(sqd->thread, NULL);
-	put_task_struct(current);
+	sqd->thread = NULL;
 	list_for_each_entry(ctx, &sqd->ctx_list, sqd_list)
 		atomic_or(IORING_SQ_NEED_WAKEUP, &ctx->rings->sq_flags);
 	io_run_task_work();
 	mutex_unlock(&sqd->lock);
-err_out:
+
 	complete(&sqd->exited);
 	do_exit(0);
 }
 
-void io_sqpoll_wait_sq(struct io_ring_ctx *ctx)
+int io_sqpoll_wait_sq(struct io_ring_ctx *ctx)
 {
 	DEFINE_WAIT(wait);
 
@@ -415,21 +339,28 @@ void io_sqpoll_wait_sq(struct io_ring_ctx *ctx)
 	} while (!signal_pending(current));
 
 	finish_wait(&ctx->sqo_sq_wait, &wait);
+	return 0;
 }
 
 __cold int io_sq_offload_create(struct io_ring_ctx *ctx,
 				struct io_uring_params *p)
 {
+	struct task_struct *task_to_put = NULL;
 	int ret;
 
 	/* Retain compatibility with failing for an invalid attach attempt */
 	if ((ctx->flags & (IORING_SETUP_ATTACH_WQ | IORING_SETUP_SQPOLL)) ==
 				IORING_SETUP_ATTACH_WQ) {
-		CLASS(fd, f)(p->wq_fd);
-		if (fd_empty(f))
+		struct fd f;
+
+		f = fdget(p->wq_fd);
+		if (!f.file)
 			return -ENXIO;
-		if (!io_is_uring_fops(fd_file(f)))
+		if (!io_is_uring_fops(f.file)) {
+			fdput(f);
 			return -EINVAL;
+		}
+		fdput(f);
 	}
 	if (ctx->flags & IORING_SETUP_SQPOLL) {
 		struct task_struct *tsk;
@@ -494,11 +425,8 @@ __cold int io_sq_offload_create(struct io_ring_ctx *ctx,
 			goto err_sqpoll;
 		}
 
-		mutex_lock(&sqd->lock);
-		rcu_assign_pointer(sqd->thread, tsk);
-		mutex_unlock(&sqd->lock);
-
-		get_task_struct(tsk);
+		sqd->thread = tsk;
+		task_to_put = get_task_struct(tsk);
 		ret = io_uring_alloc_task_context(tsk, ctx);
 		wake_up_new_task(tsk);
 		if (ret)
@@ -508,11 +436,16 @@ __cold int io_sq_offload_create(struct io_ring_ctx *ctx,
 		ret = -EINVAL;
 		goto err;
 	}
+
+	if (task_to_put)
+		put_task_struct(task_to_put);
 	return 0;
 err_sqpoll:
 	complete(&ctx->sq_data->exited);
 err:
 	io_sq_thread_finish(ctx);
+	if (task_to_put)
+		put_task_struct(task_to_put);
 	return ret;
 }
 
@@ -523,13 +456,10 @@ __cold int io_sqpoll_wq_cpu_affinity(struct io_ring_ctx *ctx,
 	int ret = -EINVAL;
 
 	if (sqd) {
-		struct task_struct *tsk;
-
 		io_sq_thread_park(sqd);
 		/* Don't set affinity for a dying thread */
-		tsk = sqpoll_task_locked(sqd);
-		if (tsk)
-			ret = io_wq_cpu_affinity(tsk->io_uring, mask);
+		if (sqd->thread)
+			ret = io_wq_cpu_affinity(sqd->thread->io_uring, mask);
 		io_sq_thread_unpark(sqd);
 	}
 

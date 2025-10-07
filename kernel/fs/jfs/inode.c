@@ -264,6 +264,11 @@ int jfs_get_block(struct inode *ip, sector_t lblock,
 	return rc;
 }
 
+static int jfs_writepage(struct page *page, struct writeback_control *wbc)
+{
+	return block_write_full_page(page, jfs_get_block, wbc);
+}
+
 static int jfs_writepages(struct address_space *mapping,
 			struct writeback_control *wbc)
 {
@@ -290,28 +295,26 @@ static void jfs_write_failed(struct address_space *mapping, loff_t to)
 	}
 }
 
-static int jfs_write_begin(const struct kiocb *iocb,
-			   struct address_space *mapping,
-			   loff_t pos, unsigned len,
-			   struct folio **foliop, void **fsdata)
+static int jfs_write_begin(struct file *file, struct address_space *mapping,
+				loff_t pos, unsigned len,
+				struct page **pagep, void **fsdata)
 {
 	int ret;
 
-	ret = block_write_begin(mapping, pos, len, foliop, jfs_get_block);
+	ret = block_write_begin(mapping, pos, len, pagep, jfs_get_block);
 	if (unlikely(ret))
 		jfs_write_failed(mapping, pos + len);
 
 	return ret;
 }
 
-static int jfs_write_end(const struct kiocb *iocb,
-			 struct address_space *mapping,
-			 loff_t pos, unsigned len, unsigned copied,
-			 struct folio *folio, void *fsdata)
+static int jfs_write_end(struct file *file, struct address_space *mapping,
+		loff_t pos, unsigned len, unsigned copied, struct page *page,
+		void *fsdata)
 {
 	int ret;
 
-	ret = generic_write_end(iocb, mapping, pos, len, copied, folio, fsdata);
+	ret = generic_write_end(file, mapping, pos, len, copied, page, fsdata);
 	if (ret < len)
 		jfs_write_failed(mapping, pos + len);
 	return ret;
@@ -352,12 +355,12 @@ const struct address_space_operations jfs_aops = {
 	.invalidate_folio = block_invalidate_folio,
 	.read_folio	= jfs_read_folio,
 	.readahead	= jfs_readahead,
+	.writepage	= jfs_writepage,
 	.writepages	= jfs_writepages,
 	.write_begin	= jfs_write_begin,
 	.write_end	= jfs_write_end,
 	.bmap		= jfs_bmap,
 	.direct_IO	= jfs_direct_IO,
-	.migrate_folio	= buffer_migrate_folio,
 };
 
 /*
@@ -371,7 +374,7 @@ void jfs_truncate_nolock(struct inode *ip, loff_t length)
 
 	ASSERT(length >= 0);
 
-	if (test_cflag(COMMIT_Nolink, ip) || isReadOnly(ip)) {
+	if (test_cflag(COMMIT_Nolink, ip)) {
 		xtTruncate(0, ip, length, COMMIT_WMAP);
 		return;
 	}
@@ -395,7 +398,7 @@ void jfs_truncate_nolock(struct inode *ip, loff_t length)
 			break;
 		}
 
-		inode_set_mtime_to_ts(ip, inode_set_ctime_current(ip));
+		ip->i_mtime = ip->i_ctime = current_time(ip);
 		mark_inode_dirty(ip);
 
 		txCommit(tid, 1, &ip, 0);

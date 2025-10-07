@@ -14,7 +14,9 @@
 #include "fjes.h"
 #include "fjes_trace.h"
 
-#define DRV_VERSION "1.2"
+#define MAJ 1
+#define MIN 2
+#define DRV_VERSION __stringify(MAJ) "." __stringify(MIN)
 #define DRV_NAME	"fjes"
 char fjes_driver_name[] = DRV_NAME;
 char fjes_driver_version[] = DRV_VERSION;
@@ -34,7 +36,7 @@ static const struct acpi_device_id fjes_acpi_ids[] = {
 	{ACPI_MOTHERBOARD_RESOURCE_HID, 0},
 	{"", 0},
 };
-MODULE_DEVICE_TABLE(acpi, fjes_acpi_ids);
+/* MODULE_DEVICE_TABLE(acpi, fjes_acpi_ids); */
 
 static bool is_extended_socket_device(struct acpi_device *device)
 {
@@ -143,17 +145,20 @@ static int fjes_acpi_add(struct acpi_device *device)
 	return 0;
 }
 
-static void fjes_acpi_remove(struct acpi_device *device)
+static int fjes_acpi_remove(struct acpi_device *device)
 {
 	struct platform_device *plat_dev;
 
 	plat_dev = (struct platform_device *)acpi_driver_data(device);
 	platform_device_unregister(plat_dev);
+
+	return 0;
 }
 
 static struct acpi_driver fjes_acpi_driver = {
 	.name = DRV_NAME,
 	.class = DRV_NAME,
+	.owner = THIS_MODULE,
 	.ids = fjes_acpi_ids,
 	.ops = {
 		.add = fjes_acpi_add,
@@ -808,7 +813,7 @@ static int fjes_change_mtu(struct net_device *netdev, int new_mtu)
 		netif_tx_stop_all_queues(netdev);
 	}
 
-	WRITE_ONCE(netdev->mtu, new_mtu);
+	netdev->mtu = new_mtu;
 
 	if (running) {
 		for (epidx = 0; epidx < hw->max_epid; epidx++) {
@@ -1027,7 +1032,7 @@ static int fjes_poll(struct napi_struct *napi, int budget)
 		}
 
 		if (((long)jiffies - (long)adapter->rx_last_jiffies) < 3) {
-			napi_schedule(napi);
+			napi_reschedule(napi);
 		} else {
 			spin_lock(&hw->rx_status_lock);
 			for (epidx = 0; epidx < hw->max_epid; epidx++) {
@@ -1435,7 +1440,7 @@ err_out:
 }
 
 /* fjes_remove - Device Removal Routine */
-static void fjes_remove(struct platform_device *plat_dev)
+static int fjes_remove(struct platform_device *plat_dev)
 {
 	struct net_device *netdev = dev_get_drvdata(&plat_dev->dev);
 	struct fjes_adapter *adapter = netdev_priv(netdev);
@@ -1459,6 +1464,8 @@ static void fjes_remove(struct platform_device *plat_dev)
 	netif_napi_del(&adapter->napi);
 
 	free_netdev(netdev);
+
+	return 0;
 }
 
 static struct platform_driver fjes_driver = {

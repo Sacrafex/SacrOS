@@ -1,4 +1,4 @@
-/* SPDX-License-Identifier: GPL-2.0 OR Linux-OpenIB */
+/* SPDX-License-Identifier: GPL-2.0 or Linux-OpenIB */
 /* Copyright (c) 2015 - 2021 Intel Corporation */
 #ifndef IRDMA_VERBS_H
 #define IRDMA_VERBS_H
@@ -100,8 +100,6 @@ struct irdma_mr {
 		struct ib_mw ibmw;
 	};
 	struct ib_umem *region;
-	int access;
-	u8 is_hwreg;
 	u16 type;
 	u32 page_cnt;
 	u64 page_size;
@@ -125,8 +123,6 @@ struct irdma_cq {
 	u32 cq_mem_size;
 	struct irdma_dma_mem kmem;
 	struct irdma_dma_mem kmem_shadow;
-	struct completion free_cq;
-	refcount_t refcnt;
 	spinlock_t lock; /* for poll cq */
 	struct irdma_pbl *iwpbl;
 	struct irdma_pbl *iwpbl_shadow;

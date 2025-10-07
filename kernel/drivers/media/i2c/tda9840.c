@@ -149,7 +149,8 @@ static const struct v4l2_subdev_ops tda9840_ops = {
 
 /* ----------------------------------------------------------------------- */
 
-static int tda9840_probe(struct i2c_client *client)
+static int tda9840_probe(struct i2c_client *client,
+			  const struct i2c_device_id *id)
 {
 	struct v4l2_subdev *sd;
 
@@ -182,7 +183,7 @@ static void tda9840_remove(struct i2c_client *client)
 }
 
 static const struct i2c_device_id tda9840_id[] = {
-	{ "tda9840" },
+	{ "tda9840", 0 },
 	{ }
 };
 MODULE_DEVICE_TABLE(i2c, tda9840_id);

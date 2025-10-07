@@ -113,7 +113,7 @@ static void if_usb_setup_firmware(struct lbtf_private *priv)
 
 static void if_usb_fw_timeo(struct timer_list *t)
 {
-	struct if_usb_card *cardp = timer_container_of(cardp, t, fw_timeout);
+	struct if_usb_card *cardp = from_timer(cardp, t, fw_timeout);
 
 	lbtf_deb_enter(LBTF_DEB_USB);
 	if (!cardp->fwdnldover) {
@@ -820,8 +820,6 @@ static int if_usb_prog_firmware(struct lbtf_private *priv)
 	kernel_param_lock(THIS_MODULE);
 	ret = request_firmware(&cardp->fw, lbtf_fw_name, &cardp->udev->dev);
 	if (ret < 0) {
-		pr_err("request_firmware() failed with %#x\n", ret);
-		pr_err("firmware %s not found\n", lbtf_fw_name);
 		kernel_param_unlock(THIS_MODULE);
 		goto done;
 	}
@@ -875,7 +873,7 @@ restart:
 	wait_event_interruptible(cardp->fw_wq, cardp->priv->surpriseremoved ||
 					       cardp->fwdnldover);
 
-	timer_delete_sync(&cardp->fw_timeout);
+	del_timer_sync(&cardp->fw_timeout);
 	usb_kill_urb(cardp->rx_urb);
 
 	if (!cardp->fwdnldover) {

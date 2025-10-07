@@ -186,6 +186,8 @@ static const struct vb2_ops dma2d_qops = {
 	.buf_queue	= dma2d_buf_queue,
 	.start_streaming = dma2d_start_streaming,
 	.stop_streaming  = dma2d_stop_streaming,
+	.wait_prepare	= vb2_ops_wait_prepare,
+	.wait_finish	= vb2_ops_wait_finish,
 };
 
 static int queue_init(void *priv, struct vb2_queue *src_vq,
@@ -602,6 +604,7 @@ static int dma2d_probe(struct platform_device *pdev)
 {
 	struct dma2d_dev *dev;
 	struct video_device *vfd;
+	struct resource *res;
 	int ret = 0;
 
 	dev = devm_kzalloc(&pdev->dev, sizeof(*dev), GFP_KERNEL);
@@ -612,7 +615,9 @@ static int dma2d_probe(struct platform_device *pdev)
 	mutex_init(&dev->mutex);
 	atomic_set(&dev->num_inst, 0);
 
-	dev->regs = devm_platform_get_and_ioremap_resource(pdev, 0, NULL);
+	res = platform_get_resource(pdev, IORESOURCE_MEM, 0);
+
+	dev->regs = devm_ioremap_resource(&pdev->dev, res);
 	if (IS_ERR(dev->regs))
 		return PTR_ERR(dev->regs);
 
@@ -692,7 +697,7 @@ put_clk_gate:
 	return ret;
 }
 
-static void dma2d_remove(struct platform_device *pdev)
+static int dma2d_remove(struct platform_device *pdev)
 {
 	struct dma2d_dev *dev = platform_get_drvdata(pdev);
 
@@ -703,6 +708,8 @@ static void dma2d_remove(struct platform_device *pdev)
 	vb2_dma_contig_clear_max_seg_size(&pdev->dev);
 	clk_unprepare(dev->gate);
 	clk_put(dev->gate);
+
+	return 0;
 }
 
 static const struct of_device_id stm32_dma2d_match[] = {

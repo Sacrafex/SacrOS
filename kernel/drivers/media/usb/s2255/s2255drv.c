@@ -471,7 +471,7 @@ static void s2255_reset_dsppower(struct s2255_dev *dev)
  */
 static void s2255_timer(struct timer_list *t)
 {
-	struct s2255_dev *dev = timer_container_of(dev, t, timer);
+	struct s2255_dev *dev = from_timer(dev, t, timer);
 	struct s2255_fw *data = dev->fw_data;
 	if (usb_submit_urb(data->fw_urb, GFP_ATOMIC) < 0) {
 		pr_err("s2255: can't submit urb\n");
@@ -704,6 +704,8 @@ static const struct vb2_ops s2255_video_qops = {
 	.buf_queue = buffer_queue,
 	.start_streaming = start_streaming,
 	.stop_streaming = stop_streaming,
+	.wait_prepare = vb2_ops_wait_prepare,
+	.wait_finish = vb2_ops_wait_finish,
 };
 
 static int vidioc_querycap(struct file *file, void *priv,
@@ -1485,7 +1487,7 @@ static void s2255_destroy(struct s2255_dev *dev)
 	/* board shutdown stops the read pipe if it is running */
 	s2255_board_shutdown(dev);
 	/* make sure firmware still not trying to load */
-	timer_shutdown_sync(&dev->timer);  /* only started in .probe and .open */
+	del_timer_sync(&dev->timer);  /* only started in .probe and .open */
 	if (dev->fw_data->fw_urb) {
 		usb_kill_urb(dev->fw_data->fw_urb);
 		usb_free_urb(dev->fw_data->fw_urb);
@@ -1904,10 +1906,9 @@ static int s2255_get_fx2fw(struct s2255_dev *dev)
 {
 	int fw;
 	int ret;
-	u8 transBuffer[2] = {};
-
-	ret = s2255_vendor_req(dev, S2255_VR_FW, 0, 0, transBuffer,
-			       sizeof(transBuffer), S2255_VR_IN);
+	unsigned char transBuffer[64];
+	ret = s2255_vendor_req(dev, S2255_VR_FW, 0, 0, transBuffer, 2,
+			       S2255_VR_IN);
 	if (ret < 0)
 		dprintk(dev, 2, "get fw error: %x\n", ret);
 	fw = transBuffer[0] + (transBuffer[1] << 8);
@@ -2275,10 +2276,8 @@ static int s2255_probe(struct usb_interface *interface,
 	}
 	/* load the first chunk */
 	if (request_firmware(&dev->fw_data->fw,
-			     FIRMWARE_FILE_NAME, &dev->udev->dev)) {
-		dev_err(&interface->dev, "sensoray 2255 failed to get firmware\n");
+			     FIRMWARE_FILE_NAME, &dev->udev->dev))
 		goto errorREQFW;
-	}
 	/* check the firmware is valid */
 	fw_size = dev->fw_data->fw->size;
 	pdata = (__le32 *) &dev->fw_data->fw->data[fw_size - 8];
@@ -2321,7 +2320,7 @@ errorREQFW:
 errorFWDATA2:
 	usb_free_urb(dev->fw_data->fw_urb);
 errorFWURB:
-	timer_shutdown_sync(&dev->timer);
+	del_timer_sync(&dev->timer);
 errorEP:
 	usb_put_dev(dev->udev);
 errorUDEV:

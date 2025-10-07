@@ -46,7 +46,6 @@
 #include <sound/initval.h>
 #include <sound/rawmidi.h>
 #include <linux/delay.h>
-#include <linux/string.h>
 
 /*
  *      globals
@@ -286,6 +285,10 @@ static void snd_mtpav_output_port_write(struct mtpav *mtp_card,
 
 		snd_mtpav_send_byte(mtp_card, 0xf5);
 		snd_mtpav_send_byte(mtp_card, portp->hwport);
+		/*
+		snd_printk(KERN_DEBUG "new outport: 0x%x\n",
+			   (unsigned int) portp->hwport);
+		*/
 		if (!(outbyte & 0x80) && portp->running_status)
 			snd_mtpav_send_byte(mtp_card, portp->running_status);
 	}
@@ -389,7 +392,7 @@ static void snd_mtpav_input_trigger(struct snd_rawmidi_substream *substream, int
 static void snd_mtpav_output_timer(struct timer_list *t)
 {
 	unsigned long flags;
-	struct mtpav *chip = timer_container_of(chip, t, timer);
+	struct mtpav *chip = from_timer(chip, t, timer);
 	int p;
 
 	spin_lock_irqsave(&chip->spinlock, flags);
@@ -413,7 +416,7 @@ static void snd_mtpav_add_output_timer(struct mtpav *chip)
 /* spinlock held! */
 static void snd_mtpav_remove_output_timer(struct mtpav *chip)
 {
-	timer_delete(&chip->timer);
+	del_timer(&chip->timer);
 }
 
 /*
@@ -519,6 +522,8 @@ static void snd_mtpav_read_bytes(struct mtpav *mcrd)
 
 	u8 sbyt = snd_mtpav_getreg(mcrd, SREG);
 
+	/* printk(KERN_DEBUG "snd_mtpav_read_bytes() sbyt: 0x%x\n", sbyt); */
+
 	if (!(sbyt & SIGS_BYTE))
 		return;
 
@@ -564,13 +569,13 @@ static int snd_mtpav_get_ISA(struct mtpav *mcard)
 	mcard->res_port = devm_request_region(mcard->card->dev, port, 3,
 					      "MotuMTPAV MIDI");
 	if (!mcard->res_port) {
-		dev_err(mcard->card->dev, "MTVAP port 0x%lx is busy\n", port);
+		snd_printk(KERN_ERR "MTVAP port 0x%lx is busy\n", port);
 		return -EBUSY;
 	}
 	mcard->port = port;
 	if (devm_request_irq(mcard->card->dev, irq, snd_mtpav_irqh, 0,
 			     "MOTU MTPAV", mcard)) {
-		dev_err(mcard->card->dev, "MTVAP IRQ %d busy\n", irq);
+		snd_printk(KERN_ERR "MTVAP IRQ %d busy\n", irq);
 		return -EBUSY;
 	}
 	mcard->irq = irq;
@@ -606,11 +611,11 @@ static void snd_mtpav_set_name(struct mtpav *chip,
 	else if (substream->number >= 8 && substream->number < chip->num_ports * 2)
 		sprintf(substream->name, "MTP remote %d", (substream->number % chip->num_ports) + 1);
 	else if (substream->number == chip->num_ports * 2)
-		strscpy(substream->name, "MTP computer");
+		strcpy(substream->name, "MTP computer");
 	else if (substream->number == chip->num_ports * 2 + 1)
-		strscpy(substream->name, "MTP ADAT");
+		strcpy(substream->name, "MTP ADAT");
 	else
-		strscpy(substream->name, "MTP broadcast");
+		strcpy(substream->name, "MTP broadcast");
 }
 
 static int snd_mtpav_get_RAWMIDI(struct mtpav *mcard)
@@ -698,8 +703,8 @@ static int snd_mtpav_probe(struct platform_device *dev)
 	if (err < 0)
 		return err;
 
-	strscpy(card->driver, "MTPAV");
-	strscpy(card->shortname, "MTPAV on parallel port");
+	strcpy(card->driver, "MTPAV");
+	strcpy(card->shortname, "MTPAV on parallel port");
 	snprintf(card->longname, sizeof(card->longname),
 		 "MTPAV on parallel port at 0x%lx", port);
 
@@ -712,9 +717,7 @@ static int snd_mtpav_probe(struct platform_device *dev)
 	card->private_free = snd_mtpav_free;
 
 	platform_set_drvdata(dev, card);
-	dev_info(card->dev,
-		 "Motu MidiTimePiece on parallel port irq: %d ioport: 0x%lx\n",
-		 irq, port);
+	printk(KERN_INFO "Motu MidiTimePiece on parallel port irq: %d ioport: 0x%lx\n", irq, port);
 	return 0;
 }
 

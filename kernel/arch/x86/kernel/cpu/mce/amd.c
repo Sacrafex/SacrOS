@@ -4,6 +4,8 @@
  *
  *  Written by Jacob Shin - AMD, Inc.
  *  Maintained by: Borislav Petkov <bp@alien8.de>
+ *
+ *  All MC4_MISCi registers are shared between cores on a node.
  */
 #include <linux/interrupt.h>
 #include <linux/notifier.h>
@@ -18,6 +20,7 @@
 #include <linux/smp.h>
 #include <linux/string.h>
 
+#include <asm/amd_nb.h>
 #include <asm/traps.h>
 #include <asm/apic.h>
 #include <asm/mce.h>
@@ -84,40 +87,42 @@ struct smca_bank {
 static DEFINE_PER_CPU_READ_MOSTLY(struct smca_bank[MAX_NR_BANKS], smca_banks);
 static DEFINE_PER_CPU_READ_MOSTLY(u8[N_SMCA_BANK_TYPES], smca_bank_counts);
 
-static const char * const smca_names[] = {
-	[SMCA_LS ... SMCA_LS_V2]	= "load_store",
-	[SMCA_IF]			= "insn_fetch",
-	[SMCA_L2_CACHE]			= "l2_cache",
-	[SMCA_DE]			= "decode_unit",
-	[SMCA_RESERVED]			= "reserved",
-	[SMCA_EX]			= "execution_unit",
-	[SMCA_FP]			= "floating_point",
-	[SMCA_L3_CACHE]			= "l3_cache",
-	[SMCA_CS ... SMCA_CS_V2]	= "coherent_slave",
-	[SMCA_PIE]			= "pie",
+struct smca_bank_name {
+	const char *name;	/* Short name for sysfs */
+	const char *long_name;	/* Long name for pretty-printing */
+};
+
+static struct smca_bank_name smca_names[] = {
+	[SMCA_LS ... SMCA_LS_V2]	= { "load_store",	"Load Store Unit" },
+	[SMCA_IF]			= { "insn_fetch",	"Instruction Fetch Unit" },
+	[SMCA_L2_CACHE]			= { "l2_cache",		"L2 Cache" },
+	[SMCA_DE]			= { "decode_unit",	"Decode Unit" },
+	[SMCA_RESERVED]			= { "reserved",		"Reserved" },
+	[SMCA_EX]			= { "execution_unit",	"Execution Unit" },
+	[SMCA_FP]			= { "floating_point",	"Floating Point Unit" },
+	[SMCA_L3_CACHE]			= { "l3_cache",		"L3 Cache" },
+	[SMCA_CS ... SMCA_CS_V2]	= { "coherent_slave",	"Coherent Slave" },
+	[SMCA_PIE]			= { "pie",		"Power, Interrupts, etc." },
 
 	/* UMC v2 is separate because both of them can exist in a single system. */
-	[SMCA_UMC]			= "umc",
-	[SMCA_UMC_V2]			= "umc_v2",
-	[SMCA_MA_LLC]			= "ma_llc",
-	[SMCA_PB]			= "param_block",
-	[SMCA_PSP ... SMCA_PSP_V2]	= "psp",
-	[SMCA_SMU ... SMCA_SMU_V2]	= "smu",
-	[SMCA_MP5]			= "mp5",
-	[SMCA_MPDMA]			= "mpdma",
-	[SMCA_NBIO]			= "nbio",
-	[SMCA_PCIE ... SMCA_PCIE_V2]	= "pcie",
-	[SMCA_XGMI_PCS]			= "xgmi_pcs",
-	[SMCA_NBIF]			= "nbif",
-	[SMCA_SHUB]			= "shub",
-	[SMCA_SATA]			= "sata",
-	[SMCA_USB]			= "usb",
-	[SMCA_USR_DP]			= "usr_dp",
-	[SMCA_USR_CP]			= "usr_cp",
-	[SMCA_GMI_PCS]			= "gmi_pcs",
-	[SMCA_XGMI_PHY]			= "xgmi_phy",
-	[SMCA_WAFL_PHY]			= "wafl_phy",
-	[SMCA_GMI_PHY]			= "gmi_phy",
+	[SMCA_UMC]			= { "umc",		"Unified Memory Controller" },
+	[SMCA_UMC_V2]			= { "umc_v2",		"Unified Memory Controller v2" },
+	[SMCA_PB]			= { "param_block",	"Parameter Block" },
+	[SMCA_PSP ... SMCA_PSP_V2]	= { "psp",		"Platform Security Processor" },
+	[SMCA_SMU ... SMCA_SMU_V2]	= { "smu",		"System Management Unit" },
+	[SMCA_MP5]			= { "mp5",		"Microprocessor 5 Unit" },
+	[SMCA_MPDMA]			= { "mpdma",		"MPDMA Unit" },
+	[SMCA_NBIO]			= { "nbio",		"Northbridge IO Unit" },
+	[SMCA_PCIE ... SMCA_PCIE_V2]	= { "pcie",		"PCI Express Unit" },
+	[SMCA_XGMI_PCS]			= { "xgmi_pcs",		"Ext Global Memory Interconnect PCS Unit" },
+	[SMCA_NBIF]			= { "nbif",		"NBIF Unit" },
+	[SMCA_SHUB]			= { "shub",		"System Hub Unit" },
+	[SMCA_SATA]			= { "sata",		"SATA Unit" },
+	[SMCA_USB]			= { "usb",		"USB Unit" },
+	[SMCA_GMI_PCS]			= { "gmi_pcs",		"Global Memory Interconnect PCS Unit" },
+	[SMCA_XGMI_PHY]			= { "xgmi_phy",		"Ext Global Memory Interconnect PHY Unit" },
+	[SMCA_WAFL_PHY]			= { "wafl_phy",		"WAFL PHY Unit" },
+	[SMCA_GMI_PHY]			= { "gmi_phy",		"Global Memory Interconnect PHY Unit" },
 };
 
 static const char *smca_get_name(enum smca_bank_types t)
@@ -125,8 +130,17 @@ static const char *smca_get_name(enum smca_bank_types t)
 	if (t >= N_SMCA_BANK_TYPES)
 		return NULL;
 
-	return smca_names[t];
+	return smca_names[t].name;
 }
+
+const char *smca_get_long_name(enum smca_bank_types t)
+{
+	if (t >= N_SMCA_BANK_TYPES)
+		return NULL;
+
+	return smca_names[t].long_name;
+}
+EXPORT_SYMBOL_GPL(smca_get_long_name);
 
 enum smca_bank_types smca_get_bank_type(unsigned int cpu, unsigned int bank)
 {
@@ -164,7 +178,6 @@ static const struct smca_hwid smca_hwid_mcatypes[] = {
 	{ SMCA_CS,	 HWID_MCATYPE(0x2E, 0x0)	},
 	{ SMCA_PIE,	 HWID_MCATYPE(0x2E, 0x1)	},
 	{ SMCA_CS_V2,	 HWID_MCATYPE(0x2E, 0x2)	},
-	{ SMCA_MA_LLC,	 HWID_MCATYPE(0x2E, 0x4)	},
 
 	/* Unified Memory Controller MCA type */
 	{ SMCA_UMC,	 HWID_MCATYPE(0x96, 0x0)	},
@@ -199,8 +212,6 @@ static const struct smca_hwid smca_hwid_mcatypes[] = {
 	{ SMCA_SHUB,	 HWID_MCATYPE(0x80, 0x0)	},
 	{ SMCA_SATA,	 HWID_MCATYPE(0xA8, 0x0)	},
 	{ SMCA_USB,	 HWID_MCATYPE(0xAA, 0x0)	},
-	{ SMCA_USR_DP,	 HWID_MCATYPE(0x170, 0x0)	},
-	{ SMCA_USR_CP,	 HWID_MCATYPE(0x180, 0x0)	},
 	{ SMCA_GMI_PCS,  HWID_MCATYPE(0x241, 0x0)	},
 	{ SMCA_XGMI_PHY, HWID_MCATYPE(0x259, 0x0)	},
 	{ SMCA_WAFL_PHY, HWID_MCATYPE(0x267, 0x0)	},
@@ -217,32 +228,6 @@ static const struct smca_hwid smca_hwid_mcatypes[] = {
  */
 #define MAX_MCATYPE_NAME_LEN	30
 static char buf_mcatype[MAX_MCATYPE_NAME_LEN];
-
-struct threshold_block {
-	/* This block's number within its bank. */
-	unsigned int		block;
-	/* MCA bank number that contains this block. */
-	unsigned int		bank;
-	/* CPU which controls this block's MCA bank. */
-	unsigned int		cpu;
-	/* MCA_MISC MSR address for this block. */
-	u32			address;
-	/* Enable/Disable APIC interrupt. */
-	bool			interrupt_enable;
-	/* Bank can generate an interrupt. */
-	bool			interrupt_capable;
-	/* Value upon which threshold interrupt is generated. */
-	u16			threshold_limit;
-	/* sysfs object */
-	struct kobject		kobj;
-	/* List of threshold blocks within this block's MCA bank. */
-	struct list_head	miscj;
-};
-
-struct threshold_bank {
-	struct kobject		*kobj;
-	struct threshold_block	*blocks;
-};
 
 static DEFINE_PER_CPU(struct threshold_bank **, threshold_banks);
 
@@ -321,8 +306,6 @@ static void smca_configure(unsigned int bank, unsigned int cpu)
 		if ((low & BIT(5)) && !((high >> 5) & 0x3))
 			high |= BIT(5);
 
-		this_cpu_ptr(mce_banks_array)[bank].lsb_in_status = !!(low & BIT(8));
-
 		wrmsr(smca_config, low, high);
 	}
 
@@ -354,6 +337,19 @@ struct thresh_restart {
 	int			lvt_off;
 	u16			old_limit;
 };
+
+static inline bool is_shared_bank(int bank)
+{
+	/*
+	 * Scalable MCA provides for only one core to have access to the MSRs of
+	 * a shared bank.
+	 */
+	if (mce_flags.smca)
+		return false;
+
+	/* Bank 4 is for northbridge reporting and is thus shared */
+	return (bank == 4);
+}
 
 static const char *bank4_names(const struct threshold_block *b)
 {
@@ -390,7 +386,7 @@ static bool lvt_interrupt_supported(unsigned int bank, u32 msr_high_bits)
 	return msr_high_bits & BIT(28);
 }
 
-static bool lvt_off_valid(struct threshold_block *b, int apic, u32 lo, u32 hi)
+static int lvt_off_valid(struct threshold_block *b, int apic, u32 lo, u32 hi)
 {
 	int msr = (hi & MASK_LVTOFF_HI) >> 20;
 
@@ -398,7 +394,7 @@ static bool lvt_off_valid(struct threshold_block *b, int apic, u32 lo, u32 hi)
 		pr_err(FW_BUG "cpu %d, failed to setup threshold interrupt "
 		       "for bank %d, block %d (MSR%08X=0x%x%08x)\n", b->cpu,
 		       b->bank, b->block, b->address, hi, lo);
-		return false;
+		return 0;
 	}
 
 	if (apic != msr) {
@@ -408,15 +404,15 @@ static bool lvt_off_valid(struct threshold_block *b, int apic, u32 lo, u32 hi)
 		 * was set is reserved. Return early here:
 		 */
 		if (mce_flags.smca)
-			return false;
+			return 0;
 
 		pr_err(FW_BUG "cpu %d, invalid threshold interrupt offset %d "
 		       "for bank %d, block %d (MSR%08X=0x%x%08x)\n",
 		       b->cpu, apic, b->bank, b->block, b->address, hi, lo);
-		return false;
+		return 0;
 	}
 
-	return true;
+	return 1;
 };
 
 /* Reprogram MCx_MISC MSR behind this threshold bank. */
@@ -661,12 +657,12 @@ static void disable_err_thresholding(struct cpuinfo_x86 *c, unsigned int bank)
 		return;
 	}
 
-	rdmsrq(MSR_K7_HWCR, hwcr);
+	rdmsrl(MSR_K7_HWCR, hwcr);
 
 	/* McStatusWrEn has to be set */
 	need_toggle = !(hwcr & BIT(18));
 	if (need_toggle)
-		wrmsrq(MSR_K7_HWCR, hwcr | BIT(18));
+		wrmsrl(MSR_K7_HWCR, hwcr | BIT(18));
 
 	/* Clear CntP bit safely */
 	for (i = 0; i < num_msrs; i++)
@@ -674,7 +670,7 @@ static void disable_err_thresholding(struct cpuinfo_x86 *c, unsigned int bank)
 
 	/* restore old settings */
 	if (need_toggle)
-		wrmsrq(MSR_K7_HWCR, hwcr);
+		wrmsrl(MSR_K7_HWCR, hwcr);
 }
 
 /* cpu init entry point, called from mce.c with preempt off */
@@ -714,106 +710,50 @@ void mce_amd_feature_init(struct cpuinfo_x86 *c)
 		deferred_error_interrupt_enable(c);
 }
 
-/*
- * DRAM ECC errors are reported in the Northbridge (bank 4) with
- * Extended Error Code 8.
- */
-static bool legacy_mce_is_memory_error(struct mce *m)
-{
-	return m->bank == 4 && XEC(m->status, 0x1f) == 8;
-}
-
-/*
- * DRAM ECC errors are reported in Unified Memory Controllers with
- * Extended Error Code 0.
- */
-static bool smca_mce_is_memory_error(struct mce *m)
-{
-	enum smca_bank_types bank_type;
-
-	if (XEC(m->status, 0x3f))
-		return false;
-
-	bank_type = smca_get_bank_type(m->extcpu, m->bank);
-
-	return bank_type == SMCA_UMC || bank_type == SMCA_UMC_V2;
-}
-
 bool amd_mce_is_memory_error(struct mce *m)
 {
+	/* ErrCodeExt[20:16] */
+	u8 xec = (m->status >> 16) & 0x1f;
+
 	if (mce_flags.smca)
-		return smca_mce_is_memory_error(m);
-	else
-		return legacy_mce_is_memory_error(m);
-}
+		return smca_get_bank_type(m->extcpu, m->bank) == SMCA_UMC && xec == 0x0;
 
-/*
- * AMD systems do not have an explicit indicator that the value in MCA_ADDR is
- * a system physical address. Therefore, individual cases need to be detected.
- * Future cases and checks will be added as needed.
- *
- * 1) General case
- *	a) Assume address is not usable.
- * 2) Poison errors
- *	a) Indicated by MCA_STATUS[43]: poison. Defined for all banks except legacy
- *	   northbridge (bank 4).
- *	b) Refers to poison consumption in the core. Does not include "no action",
- *	   "action optional", or "deferred" error severities.
- *	c) Will include a usable address so that immediate action can be taken.
- * 3) Northbridge DRAM ECC errors
- *	a) Reported in legacy bank 4 with extended error code (XEC) 8.
- *	b) MCA_STATUS[43] is *not* defined as poison in legacy bank 4. Therefore,
- *	   this bit should not be checked.
- *
- * NOTE: SMCA UMC memory errors fall into case #1.
- */
-bool amd_mce_usable_address(struct mce *m)
-{
-	/* Check special northbridge case 3) first. */
-	if (!mce_flags.smca) {
-		if (legacy_mce_is_memory_error(m))
-			return true;
-		else if (m->bank == 4)
-			return false;
-	}
-
-	/* Check poison bit for all other bank types. */
-	if (m->status & MCI_STATUS_POISON)
-		return true;
-
-	/* Assume address is not usable for all others. */
-	return false;
+	return m->bank == 4 && xec == 0x8;
 }
 
 static void __log_error(unsigned int bank, u64 status, u64 addr, u64 misc)
 {
-	struct mce_hw_err err;
-	struct mce *m = &err.m;
+	struct mce m;
 
-	mce_prep_record(&err);
+	mce_setup(&m);
 
-	m->status = status;
-	m->misc   = misc;
-	m->bank   = bank;
-	m->tsc	 = rdtsc();
+	m.status = status;
+	m.misc   = misc;
+	m.bank   = bank;
+	m.tsc	 = rdtsc();
 
-	if (m->status & MCI_STATUS_ADDRV) {
-		m->addr = addr;
+	if (m.status & MCI_STATUS_ADDRV) {
+		m.addr = addr;
 
-		smca_extract_err_addr(m);
-	}
+		/*
+		 * Extract [55:<lsb>] where lsb is the least significant
+		 * *valid* bit of the address bits.
+		 */
+		if (mce_flags.smca) {
+			u8 lsb = (m.addr >> 56) & 0x3f;
 
-	if (mce_flags.smca) {
-		rdmsrq(MSR_AMD64_SMCA_MCx_IPID(bank), m->ipid);
-
-		if (m->status & MCI_STATUS_SYNDV) {
-			rdmsrq(MSR_AMD64_SMCA_MCx_SYND(bank), m->synd);
-			rdmsrq(MSR_AMD64_SMCA_MCx_SYND1(bank), err.vendor.amd.synd1);
-			rdmsrq(MSR_AMD64_SMCA_MCx_SYND2(bank), err.vendor.amd.synd2);
+			m.addr &= GENMASK_ULL(55, lsb);
 		}
 	}
 
-	mce_log(&err);
+	if (mce_flags.smca) {
+		rdmsrl(MSR_AMD64_SMCA_MCx_IPID(bank), m.ipid);
+
+		if (m.status & MCI_STATUS_SYNDV)
+			rdmsrl(MSR_AMD64_SMCA_MCx_SYND(bank), m.synd);
+	}
+
+	mce_log(&m);
 }
 
 DEFINE_IDTENTRY_SYSVEC(sysvec_deferred_error)
@@ -822,7 +762,7 @@ DEFINE_IDTENTRY_SYSVEC(sysvec_deferred_error)
 	inc_irq_stat(irq_deferred_error_count);
 	deferred_error_int_vector();
 	trace_deferred_error_apic_exit(DEFERRED_ERROR_VECTOR);
-	apic_eoi();
+	ack_APIC_irq();
 }
 
 /*
@@ -833,16 +773,16 @@ _log_error_bank(unsigned int bank, u32 msr_stat, u32 msr_addr, u64 misc)
 {
 	u64 status, addr = 0;
 
-	rdmsrq(msr_stat, status);
+	rdmsrl(msr_stat, status);
 	if (!(status & MCI_STATUS_VAL))
 		return false;
 
 	if (status & MCI_STATUS_ADDRV)
-		rdmsrq(msr_addr, addr);
+		rdmsrl(msr_addr, addr);
 
 	__log_error(bank, status, addr, misc);
 
-	wrmsrq(msr_stat, 0);
+	wrmsrl(msr_stat, 0);
 
 	return status & MCI_STATUS_DEFERRED;
 }
@@ -861,7 +801,7 @@ static bool _log_error_deferred(unsigned int bank, u32 misc)
 		return true;
 
 	/* Clear MCA_DESTAT if the deferred error was logged from MCA_STATUS. */
-	wrmsrq(MSR_AMD64_SMCA_MCx_DESTAT(bank), 0);
+	wrmsrl(MSR_AMD64_SMCA_MCx_DESTAT(bank), 0);
 	return true;
 }
 
@@ -1094,7 +1034,7 @@ static const struct sysfs_ops threshold_ops = {
 
 static void threshold_block_release(struct kobject *kobj);
 
-static const struct kobj_type threshold_ktype = {
+static struct kobj_type threshold_ktype = {
 	.sysfs_ops		= &threshold_ops,
 	.default_groups		= default_groups,
 	.release		= threshold_block_release,
@@ -1113,7 +1053,7 @@ static const char *get_name(unsigned int cpu, unsigned int bank, struct threshol
 
 	bank_type = smca_get_bank_type(cpu, bank);
 
-	if (b && (bank_type == SMCA_UMC || bank_type == SMCA_UMC_V2)) {
+	if (b && bank_type == SMCA_UMC) {
 		if (b->block < ARRAY_SIZE(smca_umc_block_names))
 			return smca_umc_block_names[b->block];
 	}
@@ -1214,16 +1154,61 @@ out_free:
 	return err;
 }
 
+static int __threshold_add_blocks(struct threshold_bank *b)
+{
+	struct list_head *head = &b->blocks->miscj;
+	struct threshold_block *pos = NULL;
+	struct threshold_block *tmp = NULL;
+	int err = 0;
+
+	err = kobject_add(&b->blocks->kobj, b->kobj, b->blocks->kobj.name);
+	if (err)
+		return err;
+
+	list_for_each_entry_safe(pos, tmp, head, miscj) {
+
+		err = kobject_add(&pos->kobj, b->kobj, pos->kobj.name);
+		if (err) {
+			list_for_each_entry_safe_reverse(pos, tmp, head, miscj)
+				kobject_del(&pos->kobj);
+
+			return err;
+		}
+	}
+	return err;
+}
+
 static int threshold_create_bank(struct threshold_bank **bp, unsigned int cpu,
 				 unsigned int bank)
 {
 	struct device *dev = this_cpu_read(mce_device);
+	struct amd_northbridge *nb = NULL;
 	struct threshold_bank *b = NULL;
 	const char *name = get_name(cpu, bank, NULL);
 	int err = 0;
 
 	if (!dev)
 		return -ENODEV;
+
+	if (is_shared_bank(bank)) {
+		nb = node_to_amd_nb(topology_die_id(cpu));
+
+		/* threshold descriptor already initialized on this node? */
+		if (nb && nb->bank4) {
+			/* yes, use it */
+			b = nb->bank4;
+			err = kobject_add(b->kobj, &dev->kobj, name);
+			if (err)
+				goto out;
+
+			bp[bank] = b;
+			refcount_inc(&b->cpus);
+
+			err = __threshold_add_blocks(b);
+
+			goto out;
+		}
+	}
 
 	b = kzalloc(sizeof(struct threshold_bank), GFP_KERNEL);
 	if (!b) {
@@ -1236,6 +1221,17 @@ static int threshold_create_bank(struct threshold_bank **bp, unsigned int cpu,
 	if (!b->kobj) {
 		err = -EINVAL;
 		goto out_free;
+	}
+
+	if (is_shared_bank(bank)) {
+		b->shared = 1;
+		refcount_set(&b->cpus, 1);
+
+		/* nb is already initialized, see above */
+		if (nb) {
+			WARN_ON(nb->bank4);
+			nb->bank4 = b;
+		}
 	}
 
 	err = allocate_threshold_blocks(cpu, b, bank, 0, mca_msr_reg(bank, MCA_MISC));
@@ -1270,11 +1266,40 @@ static void deallocate_threshold_blocks(struct threshold_bank *bank)
 	kobject_put(&bank->blocks->kobj);
 }
 
+static void __threshold_remove_blocks(struct threshold_bank *b)
+{
+	struct threshold_block *pos = NULL;
+	struct threshold_block *tmp = NULL;
+
+	kobject_put(b->kobj);
+
+	list_for_each_entry_safe(pos, tmp, &b->blocks->miscj, miscj)
+		kobject_put(b->kobj);
+}
+
 static void threshold_remove_bank(struct threshold_bank *bank)
 {
+	struct amd_northbridge *nb;
+
 	if (!bank->blocks)
 		goto out_free;
 
+	if (!bank->shared)
+		goto out_dealloc;
+
+	if (!refcount_dec_and_test(&bank->cpus)) {
+		__threshold_remove_blocks(bank);
+		return;
+	} else {
+		/*
+		 * The last CPU on this node using the shared bank is going
+		 * away, remove that bank now.
+		 */
+		nb = node_to_amd_nb(topology_die_id(smp_processor_id()));
+		nb->bank4 = NULL;
+	}
+
+out_dealloc:
 	deallocate_threshold_blocks(bank);
 
 out_free:

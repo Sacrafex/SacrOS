@@ -127,9 +127,7 @@ static int yuan_mpc718_mt352_reqfw(struct cx18_stream *stream,
 	int ret;
 
 	ret = request_firmware(fw, fn, &cx->pci_dev->dev);
-	if (ret)
-		CX18_ERR("Unable to open firmware file %s\n", fn);
-	else {
+	if (!ret) {
 		size_t sz = (*fw)->size;
 		if (sz < 2 || sz > 64 || (sz % 2) != 0) {
 			CX18_ERR("Firmware %s has a bad size: %lu bytes\n",
@@ -234,7 +232,7 @@ static int dvb_register(struct cx18_stream *stream);
 static int cx18_dvb_start_feed(struct dvb_demux_feed *feed)
 {
 	struct dvb_demux *demux = feed->demux;
-	struct cx18_stream *stream = demux->priv;
+	struct cx18_stream *stream = (struct cx18_stream *) demux->priv;
 	struct cx18 *cx;
 	int ret;
 	u32 v;
@@ -305,7 +303,7 @@ static int cx18_dvb_start_feed(struct dvb_demux_feed *feed)
 static int cx18_dvb_stop_feed(struct dvb_demux_feed *feed)
 {
 	struct dvb_demux *demux = feed->demux;
-	struct cx18_stream *stream = demux->priv;
+	struct cx18_stream *stream = (struct cx18_stream *)demux->priv;
 	struct cx18 *cx;
 	int ret = -EINVAL;
 

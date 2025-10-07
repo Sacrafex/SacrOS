@@ -75,12 +75,15 @@ enum ad_link_speed_type {
 	AD_LINK_SPEED_100000MBPS,
 	AD_LINK_SPEED_200000MBPS,
 	AD_LINK_SPEED_400000MBPS,
-	AD_LINK_SPEED_800000MBPS,
 };
 
 /* compare MAC addresses */
 #define MAC_ADDRESS_EQUAL(A, B)	\
 	ether_addr_equal_64bits((const u8 *)A, (const u8 *)B)
+
+static const u8 null_mac_addr[ETH_ALEN + 2] __long_aligned = {
+	0, 0, 0, 0, 0, 0
+};
 
 static const u16 ad_ticks_per_sec = 1000 / AD_TIMER_INTERVAL;
 static const int ad_delta_in_ticks = (AD_TIMER_INTERVAL * HZ) / 1000;
@@ -299,7 +302,6 @@ static inline int __check_agg_selection_timer(struct port *port)
  *     %AD_LINK_SPEED_100000MBPS
  *     %AD_LINK_SPEED_200000MBPS
  *     %AD_LINK_SPEED_400000MBPS
- *     %AD_LINK_SPEED_800000MBPS
  */
 static u16 __get_link_speed(struct port *port)
 {
@@ -373,10 +375,6 @@ static u16 __get_link_speed(struct port *port)
 
 		case SPEED_400000:
 			speed = AD_LINK_SPEED_400000MBPS;
-			break;
-
-		case SPEED_800000:
-			speed = AD_LINK_SPEED_800000MBPS;
 			break;
 
 		default:
@@ -806,9 +804,6 @@ static u32 __get_agg_bandwidth(struct aggregator *aggregator)
 		case AD_LINK_SPEED_400000MBPS:
 			bandwidth = nports * 400000;
 			break;
-		case AD_LINK_SPEED_800000MBPS:
-			bandwidth = nports * 800000;
-			break;
 		default:
 			bandwidth = 0; /* to silence the compiler */
 		}
@@ -980,17 +975,6 @@ static int ad_marker_send(struct port *port, struct bond_marker *marker)
 	dev_queue_xmit(skb);
 
 	return 0;
-}
-
-static void ad_cond_set_peer_notif(struct port *port)
-{
-	struct bonding *bond = port->slave->bond;
-
-	if (bond->params.broadcast_neighbor && rtnl_trylock()) {
-		bond->send_peer_notif = bond->params.num_peer_notif *
-			max(1, bond->params.peer_notif_delay);
-		rtnl_unlock();
-	}
 }
 
 /**
@@ -1395,7 +1379,7 @@ static void ad_tx_machine(struct port *port)
 	/* check if tx timer expired, to verify that we do not send more than
 	 * 3 packets per second
 	 */
-	if (!port->sm_tx_timer_counter || !(--port->sm_tx_timer_counter)) {
+	if (port->sm_tx_timer_counter && !(--port->sm_tx_timer_counter)) {
 		/* check if there is something to send */
 		if (port->ntt && (port->sm_vars & AD_PORT_LACP_ENABLED)) {
 			__update_lacpdu_from_port(port);
@@ -1410,13 +1394,12 @@ static void ad_tx_machine(struct port *port)
 				 * again until demanded
 				 */
 				port->ntt = false;
-
-				/* restart tx timer(to verify that we will not
-				 * exceed AD_MAX_TX_IN_SECOND
-				 */
-				port->sm_tx_timer_counter = ad_ticks_per_sec / AD_MAX_TX_IN_SECOND;
 			}
 		}
+		/* restart tx timer(to verify that we will not exceed
+		 * AD_MAX_TX_IN_SECOND
+		 */
+		port->sm_tx_timer_counter = ad_ticks_per_sec/AD_MAX_TX_IN_SECOND;
 	}
 }
 
@@ -1600,7 +1583,7 @@ static void ad_port_selection_logic(struct port *port, bool *update_slave_arr)
 		     (aggregator->partner_system_priority == port->partner_oper.system_priority) &&
 		     (aggregator->partner_oper_aggregator_key == port->partner_oper.key)
 		    ) &&
-		    ((__agg_has_partner(aggregator) && /* partner answers */
+		    ((!MAC_ADDRESS_EQUAL(&(port->partner_oper.system), &(null_mac_addr)) && /* partner answers */
 		      !aggregator->is_individual)  /* but is not individual OR */
 		    )
 		   ) {
@@ -2050,7 +2033,9 @@ static void ad_enable_collecting(struct port *port)
  */
 static void ad_disable_distributing(struct port *port, bool *update_slave_arr)
 {
-	if (port->aggregator && __agg_has_partner(port->aggregator)) {
+	if (port->aggregator &&
+	    !MAC_ADDRESS_EQUAL(&port->aggregator->partner_system,
+			       &(null_mac_addr))) {
 		slave_dbg(port->slave->bond->dev, port->slave->dev,
 			  "Disabling distributing on port %d (LAG %d)\n",
 			  port->actor_port_number,
@@ -2079,8 +2064,6 @@ static void ad_enable_collecting_distributing(struct port *port,
 		__enable_port(port);
 		/* Slave array needs update */
 		*update_slave_arr = true;
-		/* Should notify peers if possible */
-		ad_cond_set_peer_notif(port);
 	}
 }
 
@@ -2092,7 +2075,9 @@ static void ad_enable_collecting_distributing(struct port *port,
 static void ad_disable_collecting_distributing(struct port *port,
 					       bool *update_slave_arr)
 {
-	if (port->aggregator && __agg_has_partner(port->aggregator)) {
+	if (port->aggregator &&
+	    !MAC_ADDRESS_EQUAL(&(port->aggregator->partner_system),
+			       &(null_mac_addr))) {
 		slave_dbg(port->slave->bond->dev, port->slave->dev,
 			  "Disabling port %d (LAG %d)\n",
 			  port->actor_port_number,

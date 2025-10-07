@@ -15,9 +15,8 @@
 #include <linux/ptp_classify.h>
 #include <linux/ptp_clock_kernel.h>
 #include <linux/udp.h>
-#include <linux/unaligned.h>
+#include <asm/unaligned.h>
 
-#include "../phylib.h"
 #include "mscc.h"
 #include "mscc_ptp.h"
 
@@ -646,11 +645,10 @@ static int __vsc85xx_gettime(struct ptp_clock_info *info, struct timespec64 *ts)
 {
 	struct vsc85xx_ptp *ptp = container_of(info, struct vsc85xx_ptp, caps);
 	struct phy_device *phydev = ptp->phydev;
+	struct vsc85xx_shared_private *shared =
+		(struct vsc85xx_shared_private *)phydev->shared->priv;
 	struct vsc8531_private *priv = phydev->priv;
-	struct vsc85xx_shared_private *shared;
 	u32 val;
-
-	shared = phy_package_get_priv(phydev);
 
 	val = vsc85xx_ts_read_csr(phydev, PROCESSOR, MSCC_PHY_PTP_LTC_CTRL);
 	val |= PTP_LTC_CTRL_SAVE_ENA;
@@ -698,11 +696,10 @@ static int __vsc85xx_settime(struct ptp_clock_info *info,
 {
 	struct vsc85xx_ptp *ptp = container_of(info, struct vsc85xx_ptp, caps);
 	struct phy_device *phydev = ptp->phydev;
+	struct vsc85xx_shared_private *shared =
+		(struct vsc85xx_shared_private *)phydev->shared->priv;
 	struct vsc8531_private *priv = phydev->priv;
-	struct vsc85xx_shared_private *shared;
 	u32 val;
-
-	shared = phy_package_get_priv(phydev);
 
 	vsc85xx_ts_write_csr(phydev, PROCESSOR, MSCC_PHY_PTP_LTC_LOAD_SEC_MSB,
 			     PTP_LTC_LOAD_SEC_MSB(ts->tv_sec));
@@ -1051,17 +1048,19 @@ static void vsc85xx_ts_reset_fifo(struct phy_device *phydev)
 			     val);
 }
 
-static int vsc85xx_hwtstamp(struct mii_timestamper *mii_ts,
-			    struct kernel_hwtstamp_config *cfg,
-			    struct netlink_ext_ack *extack)
+static int vsc85xx_hwtstamp(struct mii_timestamper *mii_ts, struct ifreq *ifr)
 {
 	struct vsc8531_private *vsc8531 =
 		container_of(mii_ts, struct vsc8531_private, mii_ts);
 	struct phy_device *phydev = vsc8531->ptp->phydev;
+	struct hwtstamp_config cfg;
 	bool one_step = false;
 	u32 val;
 
-	switch (cfg->tx_type) {
+	if (copy_from_user(&cfg, ifr->ifr_data, sizeof(cfg)))
+		return -EFAULT;
+
+	switch (cfg.tx_type) {
 	case HWTSTAMP_TX_ONESTEP_SYNC:
 		one_step = true;
 		break;
@@ -1074,9 +1073,9 @@ static int vsc85xx_hwtstamp(struct mii_timestamper *mii_ts,
 		return -ERANGE;
 	}
 
-	vsc8531->ptp->tx_type = cfg->tx_type;
+	vsc8531->ptp->tx_type = cfg.tx_type;
 
-	switch (cfg->rx_filter) {
+	switch (cfg.rx_filter) {
 	case HWTSTAMP_FILTER_NONE:
 		break;
 	case HWTSTAMP_FILTER_PTP_V2_L4_EVENT:
@@ -1089,7 +1088,7 @@ static int vsc85xx_hwtstamp(struct mii_timestamper *mii_ts,
 		return -ERANGE;
 	}
 
-	vsc8531->ptp->rx_filter = cfg->rx_filter;
+	vsc8531->ptp->rx_filter = cfg.rx_filter;
 
 	mutex_lock(&vsc8531->ts_lock);
 
@@ -1134,11 +1133,11 @@ static int vsc85xx_hwtstamp(struct mii_timestamper *mii_ts,
 	vsc8531->ptp->configured = 1;
 	mutex_unlock(&vsc8531->ts_lock);
 
-	return 0;
+	return copy_to_user(ifr->ifr_data, &cfg, sizeof(cfg)) ? -EFAULT : 0;
 }
 
 static int vsc85xx_ts_info(struct mii_timestamper *mii_ts,
-			   struct kernel_ethtool_ts_info *info)
+			   struct ethtool_ts_info *info)
 {
 	struct vsc8531_private *vsc8531 =
 		container_of(mii_ts, struct vsc8531_private, mii_ts);
@@ -1604,9 +1603,6 @@ int vsc8584_ptp_probe(struct phy_device *phydev)
 		return PTR_ERR(vsc8531->load_save);
 	}
 
-	/* Timestamp selected by default to keep legacy API */
-	phydev->default_timestamp = true;
-
 	vsc8531->ptp->phydev = phydev;
 
 	vsc8531->mii_ts.rxtstamp = vsc85xx_rxtstamp;
@@ -1623,7 +1619,8 @@ int vsc8584_ptp_probe(struct phy_device *phydev)
 
 int vsc8584_ptp_probe_once(struct phy_device *phydev)
 {
-	struct vsc85xx_shared_private *shared = phy_package_get_priv(phydev);
+	struct vsc85xx_shared_private *shared =
+		(struct vsc85xx_shared_private *)phydev->shared->priv;
 
 	/* Initialize shared GPIO lock */
 	mutex_init(&shared->gpio_lock);

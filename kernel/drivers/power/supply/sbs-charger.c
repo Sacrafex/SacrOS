@@ -162,7 +162,8 @@ static const struct power_supply_desc sbs_desc = {
 	.get_property = sbs_get_property,
 };
 
-static int sbs_probe(struct i2c_client *client)
+static int sbs_probe(struct i2c_client *client,
+		     const struct i2c_device_id *id)
 {
 	struct power_supply_config psy_cfg = {};
 	struct sbs_info *chip;
@@ -173,7 +174,7 @@ static int sbs_probe(struct i2c_client *client)
 		return -ENOMEM;
 
 	chip->client = client;
-	psy_cfg.fwnode = dev_fwnode(&client->dev);
+	psy_cfg.of_node = client->dev.of_node;
 	psy_cfg.drv_data = chip;
 
 	i2c_set_clientdata(client, chip);
@@ -234,7 +235,7 @@ MODULE_DEVICE_TABLE(of, sbs_dt_ids);
 #endif
 
 static const struct i2c_device_id sbs_id[] = {
-	{ "sbs-charger" },
+	{ "sbs-charger", 0 },
 	{ }
 };
 MODULE_DEVICE_TABLE(i2c, sbs_id);

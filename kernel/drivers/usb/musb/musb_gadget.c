@@ -14,7 +14,6 @@
 #include <linux/module.h>
 #include <linux/smp.h>
 #include <linux/spinlock.h>
-#include <linux/string_choices.h>
 #include <linux/delay.h>
 #include <linux/dma-mapping.h>
 #include <linux/slab.h>
@@ -1131,7 +1130,7 @@ static int musb_gadget_disable(struct usb_ep *ep)
 struct usb_request *musb_alloc_request(struct usb_ep *ep, gfp_t gfp_flags)
 {
 	struct musb_ep		*musb_ep = to_musb_ep(ep);
-	struct musb_request	*request;
+	struct musb_request	*request = NULL;
 
 	request = kzalloc(sizeof *request, gfp_flags);
 	if (!request)
@@ -1156,6 +1155,15 @@ void musb_free_request(struct usb_ep *ep, struct usb_request *req)
 	trace_musb_req_free(request);
 	kfree(request);
 }
+
+static LIST_HEAD(buffers);
+
+struct free_record {
+	struct list_head	list;
+	struct device		*dev;
+	unsigned		bytes;
+	dma_addr_t		dma;
+};
 
 /*
  * Context: controller locked, IRQs blocked.
@@ -1551,11 +1559,9 @@ static int musb_gadget_wakeup(struct usb_gadget *gadget)
 				break;
 		}
 
-		if (musb->xceiv) {
-			spin_unlock_irqrestore(&musb->lock, flags);
-			otg_start_srp(musb->xceiv->otg);
-			spin_lock_irqsave(&musb->lock, flags);
-		}
+		spin_unlock_irqrestore(&musb->lock, flags);
+		otg_start_srp(musb->xceiv->otg);
+		spin_lock_irqsave(&musb->lock, flags);
 
 		/* Block idling for at least 1s */
 		musb_platform_try_idle(musb,
@@ -1565,7 +1571,7 @@ static int musb_gadget_wakeup(struct usb_gadget *gadget)
 		goto done;
 	default:
 		musb_dbg(musb, "Unhandled wake: %s",
-			 musb_otg_state_string(musb));
+			usb_otg_state_string(musb->xceiv->otg->state));
 		goto done;
 	}
 
@@ -1607,7 +1613,7 @@ static void musb_pullup(struct musb *musb, int is_on)
 	/* FIXME if on, HdrcStart; if off, HdrcStop */
 
 	musb_dbg(musb, "gadget D+ pullup %s",
-		str_on_off(is_on));
+		is_on ? "on" : "off");
 	musb_writeb(musb->mregs, MUSB_POWER, power);
 }
 
@@ -1743,6 +1749,7 @@ static inline void musb_g_init_endpoints(struct musb *musb)
 {
 	u8			epnum;
 	struct musb_hw_ep	*hw_ep;
+	unsigned		count = 0;
 
 	/* initialize endpoint list just once */
 	INIT_LIST_HEAD(&(musb->g.ep_list));
@@ -1752,14 +1759,17 @@ static inline void musb_g_init_endpoints(struct musb *musb)
 			epnum++, hw_ep++) {
 		if (hw_ep->is_shared_fifo /* || !epnum */) {
 			init_peripheral_ep(musb, &hw_ep->ep_in, epnum, 0);
+			count++;
 		} else {
 			if (hw_ep->max_packet_sz_tx) {
 				init_peripheral_ep(musb, &hw_ep->ep_in,
 							epnum, 1);
+				count++;
 			}
 			if (hw_ep->max_packet_sz_rx) {
 				init_peripheral_ep(musb, &hw_ep->ep_out,
 							epnum, 0);
+				count++;
 			}
 		}
 	}
@@ -1829,6 +1839,7 @@ static int musb_gadget_start(struct usb_gadget *g,
 		struct usb_gadget_driver *driver)
 {
 	struct musb		*musb = gadget_to_musb(g);
+	struct usb_otg		*otg = musb->xceiv->otg;
 	unsigned long		flags;
 	int			retval = 0;
 
@@ -1845,11 +1856,7 @@ static int musb_gadget_start(struct usb_gadget *g,
 	spin_lock_irqsave(&musb->lock, flags);
 	musb->is_active = 1;
 
-	if (musb->xceiv)
-		otg_set_peripheral(musb->xceiv->otg, &musb->g);
-	else
-		phy_set_mode(musb->phy, PHY_MODE_USB_DEVICE);
-
+	otg_set_peripheral(otg, &musb->g);
 	musb_set_state(musb, OTG_STATE_B_IDLE);
 	spin_unlock_irqrestore(&musb->lock, flags);
 
@@ -1859,7 +1866,7 @@ static int musb_gadget_start(struct usb_gadget *g,
 	 * handles power budgeting ... this way also
 	 * ensures HdrcStart is indirectly called.
 	 */
-	if (musb->xceiv && musb->xceiv->last_event == USB_EVENT_ID)
+	if (musb->xceiv->last_event == USB_EVENT_ID)
 		musb_platform_set_vbus(musb, 1);
 
 	pm_runtime_mark_last_busy(musb->controller);
@@ -1897,11 +1904,7 @@ static int musb_gadget_stop(struct usb_gadget *g)
 
 	musb_set_state(musb, OTG_STATE_UNDEFINED);
 	musb_stop(musb);
-
-	if (musb->xceiv)
-		otg_set_peripheral(musb->xceiv->otg, NULL);
-	else
-		phy_set_mode(musb->phy, PHY_MODE_INVALID);
+	otg_set_peripheral(musb->xceiv->otg, NULL);
 
 	musb->is_active = 0;
 	musb->gadget_driver = NULL;
@@ -1943,7 +1946,7 @@ void musb_g_resume(struct musb *musb)
 		break;
 	default:
 		WARNING("unhandled RESUME transition (%s)\n",
-			musb_otg_state_string(musb));
+				usb_otg_state_string(musb->xceiv->otg->state));
 	}
 }
 
@@ -1973,7 +1976,7 @@ void musb_g_suspend(struct musb *musb)
 		 * A_PERIPHERAL may need care too
 		 */
 		WARNING("unhandled SUSPEND transition (%s)",
-			musb_otg_state_string(musb));
+				usb_otg_state_string(musb->xceiv->otg->state));
 	}
 }
 
@@ -2007,7 +2010,7 @@ void musb_g_disconnect(struct musb *musb)
 	switch (musb_get_state(musb)) {
 	default:
 		musb_dbg(musb, "Unhandled disconnect %s, setting a_idle",
-			 musb_otg_state_string(musb));
+			usb_otg_state_string(musb->xceiv->otg->state));
 		musb_set_state(musb, OTG_STATE_A_IDLE);
 		MUSB_HST_MODE(musb);
 		break;

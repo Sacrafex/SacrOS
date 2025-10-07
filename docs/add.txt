@@ -1,0 +1,9 @@
+To run kernel in a VM (Virtual Machine), run ./scripts/run-vm.sh
+-- Possible Parameters include -clean (clears previous build), -safe (runs safely)
+
+Full Kernel is located in ./kernel
+
+Apps / Packages for ISO build need to be included in ./apps
+
+If you recieve this error when compiling the kernel: "[ERROR] Retry to mount disk image failed. Check if the disk image is corrupted or in use."
+Try re-running the script and it may work.

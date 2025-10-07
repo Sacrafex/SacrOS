@@ -21,7 +21,6 @@
 #include <linux/mutex.h>
 #include <linux/buffer_head.h>
 #include <linux/blkdev.h>
-#include <linux/fs_context.h>
 #include "hfsplus_raw.h"
 
 #define DBG_BNODE_REFS	0x00000001
@@ -192,7 +191,6 @@ struct hfsplus_sb_info {
 	int work_queued;               /* non-zero delayed work is queued */
 	struct delayed_work sync_work; /* FS sync delayed work */
 	spinlock_t work_lock;          /* protects sync_work and work_queued */
-	struct rcu_head rcu;
 };
 
 #define HFSPLUS_SB_WRITEBACKUP	0
@@ -473,10 +471,8 @@ extern const struct address_space_operations hfsplus_aops;
 extern const struct address_space_operations hfsplus_btree_aops;
 extern const struct dentry_operations hfsplus_dentry_operations;
 
-int hfsplus_write_begin(const struct kiocb *iocb,
-			struct address_space *mapping,
-			loff_t pos, unsigned len, struct folio **foliop,
-			void **fsdata);
+int hfsplus_write_begin(struct file *file, struct address_space *mapping,
+		loff_t pos, unsigned len, struct page **pagep, void **fsdata);
 struct inode *hfsplus_new_inode(struct super_block *sb, struct inode *dir,
 				umode_t mode);
 void hfsplus_delete_inode(struct inode *inode);
@@ -486,21 +482,22 @@ void hfsplus_inode_write_fork(struct inode *inode,
 			      struct hfsplus_fork_raw *fork);
 int hfsplus_cat_read_inode(struct inode *inode, struct hfs_find_data *fd);
 int hfsplus_cat_write_inode(struct inode *inode);
-int hfsplus_getattr(struct mnt_idmap *idmap, const struct path *path,
+int hfsplus_getattr(struct user_namespace *mnt_userns, const struct path *path,
 		    struct kstat *stat, u32 request_mask,
 		    unsigned int query_flags);
 int hfsplus_file_fsync(struct file *file, loff_t start, loff_t end,
 		       int datasync);
-int hfsplus_fileattr_get(struct dentry *dentry, struct file_kattr *fa);
-int hfsplus_fileattr_set(struct mnt_idmap *idmap,
-			 struct dentry *dentry, struct file_kattr *fa);
+int hfsplus_fileattr_get(struct dentry *dentry, struct fileattr *fa);
+int hfsplus_fileattr_set(struct user_namespace *mnt_userns,
+			 struct dentry *dentry, struct fileattr *fa);
 
 /* ioctl.c */
 long hfsplus_ioctl(struct file *filp, unsigned int cmd, unsigned long arg);
 
 /* options.c */
 void hfsplus_fill_defaults(struct hfsplus_sb_info *opts);
-int hfsplus_parse_param(struct fs_context *fc, struct fs_parameter *param);
+int hfsplus_parse_options_remount(char *input, int *force);
+int hfsplus_parse_options(char *input, struct hfsplus_sb_info *sbi);
 int hfsplus_show_options(struct seq_file *seq, struct dentry *root);
 
 /* part_tbl.c */

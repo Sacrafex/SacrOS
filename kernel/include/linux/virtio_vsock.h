@@ -12,7 +12,6 @@
 struct virtio_vsock_skb_cb {
 	bool reply;
 	bool tap_delivered;
-	u32 offset;
 };
 
 #define VIRTIO_VSOCK_SKB_CB(skb) ((struct virtio_vsock_skb_cb *)((skb)->cb))
@@ -47,48 +46,29 @@ static inline void virtio_vsock_skb_clear_tap_delivered(struct sk_buff *skb)
 	VIRTIO_VSOCK_SKB_CB(skb)->tap_delivered = false;
 }
 
-static inline void virtio_vsock_skb_put(struct sk_buff *skb, u32 len)
+static inline void virtio_vsock_skb_rx_put(struct sk_buff *skb)
 {
-	DEBUG_NET_WARN_ON_ONCE(skb->len);
+	u32 len;
 
-	if (skb_is_nonlinear(skb))
-		skb->len = len;
-	else
+	len = le32_to_cpu(virtio_vsock_hdr(skb)->len);
+
+	if (len > 0)
 		skb_put(skb, len);
-}
-
-static inline struct sk_buff *
-__virtio_vsock_alloc_skb_with_frags(unsigned int header_len,
-				    unsigned int data_len,
-				    gfp_t mask)
-{
-	struct sk_buff *skb;
-	int err;
-
-	skb = alloc_skb_with_frags(header_len, data_len,
-				   PAGE_ALLOC_COSTLY_ORDER, &err, mask);
-	if (!skb)
-		return NULL;
-
-	skb_reserve(skb, VIRTIO_VSOCK_SKB_HEADROOM);
-	skb->data_len = data_len;
-	return skb;
-}
-
-static inline struct sk_buff *
-virtio_vsock_alloc_linear_skb(unsigned int size, gfp_t mask)
-{
-	return __virtio_vsock_alloc_skb_with_frags(size, 0, mask);
 }
 
 static inline struct sk_buff *virtio_vsock_alloc_skb(unsigned int size, gfp_t mask)
 {
-	if (size <= SKB_WITH_OVERHEAD(PAGE_SIZE << PAGE_ALLOC_COSTLY_ORDER))
-		return virtio_vsock_alloc_linear_skb(size, mask);
+	struct sk_buff *skb;
 
-	size -= VIRTIO_VSOCK_SKB_HEADROOM;
-	return __virtio_vsock_alloc_skb_with_frags(VIRTIO_VSOCK_SKB_HEADROOM,
-						   size, mask);
+	if (size < VIRTIO_VSOCK_SKB_HEADROOM)
+		return NULL;
+
+	skb = alloc_skb(size, mask);
+	if (!skb)
+		return NULL;
+
+	skb_reserve(skb, VIRTIO_VSOCK_SKB_HEADROOM);
+	return skb;
 }
 
 static inline void
@@ -157,14 +137,12 @@ struct virtio_vsock_sock {
 	u32 tx_cnt;
 	u32 peer_fwd_cnt;
 	u32 peer_buf_alloc;
-	size_t bytes_unsent;
 
 	/* Protected by rx_lock */
 	u32 fwd_cnt;
 	u32 last_fwd_cnt;
 	u32 rx_bytes;
 	u32 buf_alloc;
-	u32 buf_used;
 	struct sk_buff_head rx_queue;
 	u32 msg_count;
 };
@@ -186,15 +164,6 @@ struct virtio_transport {
 
 	/* Takes ownership of the packet */
 	int (*send_pkt)(struct sk_buff *skb);
-
-	/* Used in MSG_ZEROCOPY mode. Checks, that provided data
-	 * (number of buffers) could be transmitted with zerocopy
-	 * mode. If this callback is not implemented for the current
-	 * transport - this means that this transport doesn't need
-	 * extra checks and can perform zerocopy transmission by
-	 * default.
-	 */
-	bool (*can_msgzerocopy)(int bufs_num);
 };
 
 ssize_t
@@ -218,11 +187,6 @@ virtio_transport_seqpacket_dequeue(struct vsock_sock *vsk,
 s64 virtio_transport_stream_has_data(struct vsock_sock *vsk);
 s64 virtio_transport_stream_has_space(struct vsock_sock *vsk);
 u32 virtio_transport_seqpacket_has_data(struct vsock_sock *vsk);
-
-ssize_t virtio_transport_unsent_bytes(struct vsock_sock *vsk);
-
-void virtio_transport_consume_skb_sent(struct sk_buff *skb,
-				       bool consume);
 
 int virtio_transport_do_socket_init(struct vsock_sock *vsk,
 				 struct vsock_sock *psk);
@@ -286,6 +250,4 @@ u32 virtio_transport_get_credit(struct virtio_vsock_sock *vvs, u32 wanted);
 void virtio_transport_put_credit(struct virtio_vsock_sock *vvs, u32 credit);
 void virtio_transport_deliver_tap_pkt(struct sk_buff *skb);
 int virtio_transport_purge_skbs(void *vsk, struct sk_buff_head *list);
-int virtio_transport_read_skb(struct vsock_sock *vsk, skb_read_actor_t read_actor);
-int virtio_transport_notify_set_rcvlowat(struct vsock_sock *vsk, int val);
 #endif /* _LINUX_VIRTIO_VSOCK_H */

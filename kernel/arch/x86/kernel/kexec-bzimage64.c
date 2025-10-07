@@ -27,8 +27,6 @@
 #include <asm/kexec-bzimage64.h>
 
 #define MAX_ELFCOREHDR_STR_LEN	30	/* elfcorehdr=0x<64bit-value> */
-#define MAX_DMCRYPTKEYS_STR_LEN	31	/* dmcryptkeys=0x<64bit-value> */
-
 
 /*
  * Defines lowest physical address for various segments. Not sure where
@@ -78,17 +76,13 @@ static int setup_cmdline(struct kimage *image, struct boot_params *params,
 	if (image->type == KEXEC_TYPE_CRASH) {
 		len = sprintf(cmdline_ptr,
 			"elfcorehdr=0x%lx ", image->elf_load_addr);
-
-		if (image->dm_crypt_keys_addr != 0)
-			len += sprintf(cmdline_ptr + len,
-					"dmcryptkeys=0x%lx ", image->dm_crypt_keys_addr);
 	}
 	memcpy(cmdline_ptr + len, cmdline, cmdline_len);
 	cmdline_len += len;
 
 	cmdline_ptr[cmdline_len - 1] = '\0';
 
-	kexec_dprintk("Final command line is: %s\n", cmdline_ptr);
+	pr_debug("Final command line is: %s\n", cmdline_ptr);
 	cmdline_ptr_phys = bootparams_load_addr + cmdline_offset;
 	cmdline_low_32 = cmdline_ptr_phys & 0xffffffffUL;
 	cmdline_ext_32 = cmdline_ptr_phys >> 32;
@@ -239,32 +233,6 @@ setup_ima_state(const struct kimage *image, struct boot_params *params,
 #endif /* CONFIG_IMA_KEXEC */
 }
 
-static void setup_kho(const struct kimage *image, struct boot_params *params,
-		      unsigned long params_load_addr,
-		      unsigned int setup_data_offset)
-{
-	struct setup_data *sd = (void *)params + setup_data_offset;
-	struct kho_data *kho = (void *)sd + sizeof(*sd);
-
-	if (!IS_ENABLED(CONFIG_KEXEC_HANDOVER))
-		return;
-
-	sd->type = SETUP_KEXEC_KHO;
-	sd->len = sizeof(struct kho_data);
-
-	/* Only add if we have all KHO images in place */
-	if (!image->kho.fdt || !image->kho.scratch)
-		return;
-
-	/* Add setup data */
-	kho->fdt_addr = image->kho.fdt;
-	kho->fdt_size = PAGE_SIZE;
-	kho->scratch_addr = image->kho.scratch->mem;
-	kho->scratch_size = image->kho.scratch->bufsz;
-	sd->next = params->hdr.setup_data;
-	params->hdr.setup_data = params_load_addr + setup_data_offset;
-}
-
 static int
 setup_boot_parameters(struct kimage *image, struct boot_params *params,
 		      unsigned long params_load_addr,
@@ -295,23 +263,16 @@ setup_boot_parameters(struct kimage *image, struct boot_params *params,
 	memset(&params->hd0_info, 0, sizeof(params->hd0_info));
 	memset(&params->hd1_info, 0, sizeof(params->hd1_info));
 
-#ifdef CONFIG_CRASH_DUMP
 	if (image->type == KEXEC_TYPE_CRASH) {
 		ret = crash_setup_memmap_entries(image, params);
 		if (ret)
 			return ret;
 	} else
-#endif
 		setup_e820_entries(params);
 
 	nr_e820_entries = params->e820_entries;
 
-	kexec_dprintk("E820 memmap:\n");
 	for (i = 0; i < nr_e820_entries; i++) {
-		kexec_dprintk("%016llx-%016llx (%d)\n",
-			      params->e820_table[i].addr,
-			      params->e820_table[i].addr + params->e820_table[i].size - 1,
-			      params->e820_table[i].type);
 		if (params->e820_table[i].type != E820_TYPE_RAM)
 			continue;
 		start = params->e820_table[i].addr;
@@ -342,13 +303,6 @@ setup_boot_parameters(struct kimage *image, struct boot_params *params,
 				setup_data_offset);
 		setup_data_offset += sizeof(struct setup_data) +
 				     sizeof(struct ima_setup_data);
-	}
-
-	if (IS_ENABLED(CONFIG_KEXEC_HANDOVER)) {
-		/* Setup space to store preservation metadata */
-		setup_kho(image, params, params_load_addr, setup_data_offset);
-		setup_data_offset += sizeof(struct setup_data) +
-				     sizeof(struct kho_data);
 	}
 
 	/* Setup RNG seed */
@@ -470,31 +424,16 @@ static void *bzImage64_load(struct kimage *image, char *kernel,
 	 * command line. Make sure it does not overflow
 	 */
 	if (cmdline_len + MAX_ELFCOREHDR_STR_LEN > header->cmdline_size) {
-		pr_err("Appending elfcorehdr=<addr> to command line exceeds maximum allowed length\n");
+		pr_debug("Appending elfcorehdr=<addr> to command line exceeds maximum allowed length\n");
 		return ERR_PTR(-EINVAL);
 	}
 
-#ifdef CONFIG_CRASH_DUMP
 	/* Allocate and load backup region */
 	if (image->type == KEXEC_TYPE_CRASH) {
 		ret = crash_load_segments(image);
 		if (ret)
 			return ERR_PTR(ret);
-		ret = crash_load_dm_crypt_keys(image);
-		if (ret == -ENOENT) {
-			kexec_dprintk("No dm crypt key to load\n");
-		} else if (ret) {
-			pr_err("Failed to load dm crypt keys\n");
-			return ERR_PTR(ret);
-		}
-		if (image->dm_crypt_keys_addr &&
-		    cmdline_len + MAX_ELFCOREHDR_STR_LEN + MAX_DMCRYPTKEYS_STR_LEN >
-			    header->cmdline_size) {
-			pr_err("Appending dmcryptkeys=<addr> to command line exceeds maximum allowed length\n");
-			return ERR_PTR(-EINVAL);
-		}
 	}
-#endif
 
 	/*
 	 * Load purgatory. For 64bit entry point, purgatory  code can be
@@ -506,7 +445,7 @@ static void *bzImage64_load(struct kimage *image, char *kernel,
 		return ERR_PTR(ret);
 	}
 
-	kexec_dprintk("Loaded purgatory at 0x%lx\n", pbuf.mem);
+	pr_debug("Loaded purgatory at 0x%lx\n", pbuf.mem);
 
 
 	/*
@@ -520,8 +459,6 @@ static void *bzImage64_load(struct kimage *image, char *kernel,
 	efi_map_sz = efi_get_runtime_map_size();
 	params_cmdline_sz = sizeof(struct boot_params) + cmdline_len +
 				MAX_ELFCOREHDR_STR_LEN;
-	if (image->dm_crypt_keys_addr)
-		params_cmdline_sz += MAX_DMCRYPTKEYS_STR_LEN;
 	params_cmdline_sz = ALIGN(params_cmdline_sz, 16);
 	kbuf.bufsz = params_cmdline_sz + ALIGN(efi_map_sz, 16) +
 				sizeof(struct setup_data) +
@@ -533,17 +470,13 @@ static void *bzImage64_load(struct kimage *image, char *kernel,
 		kbuf.bufsz += sizeof(struct setup_data) +
 			      sizeof(struct ima_setup_data);
 
-	if (IS_ENABLED(CONFIG_KEXEC_HANDOVER))
-		kbuf.bufsz += sizeof(struct setup_data) +
-			      sizeof(struct kho_data);
-
 	params = kzalloc(kbuf.bufsz, GFP_KERNEL);
 	if (!params)
 		return ERR_PTR(-ENOMEM);
 	efi_map_offset = params_cmdline_sz;
 	efi_setup_data_offset = efi_map_offset + ALIGN(efi_map_sz, 16);
 
-	/* Copy setup header onto bootparams. Documentation/arch/x86/boot.rst */
+	/* Copy setup header onto bootparams. Documentation/x86/boot.rst */
 	setup_header_size = 0x0202 + kernel[0x0201] - setup_hdr_offset;
 
 	/* Is there a limit on setup header size? */
@@ -557,26 +490,23 @@ static void *bzImage64_load(struct kimage *image, char *kernel,
 	if (ret)
 		goto out_free_params;
 	bootparam_load_addr = kbuf.mem;
-	kexec_dprintk("Loaded boot_param, command line and misc at 0x%lx bufsz=0x%lx memsz=0x%lx\n",
-		      bootparam_load_addr, kbuf.bufsz, kbuf.memsz);
+	pr_debug("Loaded boot_param, command line and misc at 0x%lx bufsz=0x%lx memsz=0x%lx\n",
+		 bootparam_load_addr, kbuf.bufsz, kbuf.bufsz);
 
 	/* Load kernel */
 	kbuf.buffer = kernel + kern16_size;
 	kbuf.bufsz =  kernel_len - kern16_size;
 	kbuf.memsz = PAGE_ALIGN(header->init_size);
 	kbuf.buf_align = header->kernel_alignment;
-	if (header->pref_address < MIN_KERNEL_LOAD_ADDR)
-		kbuf.buf_min = MIN_KERNEL_LOAD_ADDR;
-	else
-		kbuf.buf_min = header->pref_address;
+	kbuf.buf_min = MIN_KERNEL_LOAD_ADDR;
 	kbuf.mem = KEXEC_BUF_MEM_UNKNOWN;
 	ret = kexec_add_buffer(&kbuf);
 	if (ret)
 		goto out_free_params;
 	kernel_load_addr = kbuf.mem;
 
-	kexec_dprintk("Loaded 64bit kernel at 0x%lx bufsz=0x%lx memsz=0x%lx\n",
-		      kernel_load_addr, kbuf.bufsz, kbuf.memsz);
+	pr_debug("Loaded 64bit kernel at 0x%lx bufsz=0x%lx memsz=0x%lx\n",
+		 kernel_load_addr, kbuf.bufsz, kbuf.memsz);
 
 	/* Load initrd high */
 	if (initrd) {
@@ -590,8 +520,8 @@ static void *bzImage64_load(struct kimage *image, char *kernel,
 			goto out_free_params;
 		initrd_load_addr = kbuf.mem;
 
-		kexec_dprintk("Loaded initrd at 0x%lx bufsz=0x%lx memsz=0x%lx\n",
-			      initrd_load_addr, initrd_len, initrd_len);
+		pr_debug("Loaded initrd at 0x%lx bufsz=0x%lx memsz=0x%lx\n",
+				initrd_load_addr, initrd_len, initrd_len);
 
 		setup_initrd(params, initrd_load_addr, initrd_len);
 	}

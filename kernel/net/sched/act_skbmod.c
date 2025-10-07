@@ -15,16 +15,14 @@
 #include <net/netlink.h>
 #include <net/pkt_sched.h>
 #include <net/pkt_cls.h>
-#include <net/tc_wrapper.h>
 
 #include <linux/tc_act/tc_skbmod.h>
 #include <net/tc_act/tc_skbmod.h>
 
 static struct tc_action_ops act_skbmod_ops;
 
-TC_INDIRECT_SCOPE int tcf_skbmod_act(struct sk_buff *skb,
-				     const struct tc_action *a,
-				     struct tcf_result *res)
+static int tcf_skbmod_act(struct sk_buff *skb, const struct tc_action *a,
+			  struct tcf_result *res)
 {
 	struct tcf_skbmod *d = to_skbmod(a);
 	int action, max_edit_len, err;
@@ -157,7 +155,7 @@ static int tcf_skbmod_init(struct net *net, struct nlattr *nla,
 		return err;
 	exists = err;
 	if (exists && bind)
-		return ACT_P_BOUND;
+		return 0;
 
 	if (!lflags) {
 		if (exists)
@@ -246,7 +244,7 @@ static int tcf_skbmod_dump(struct sk_buff *skb, struct tc_action *a,
 
 	memset(&opt, 0, sizeof(opt));
 	opt.index   = d->tcf_index;
-	opt.refcnt  = refcount_read(&d->tcf_refcnt) - ref;
+	opt.refcnt  = refcount_read(&d->tcf_refcnt) - ref,
 	opt.bindcnt = atomic_read(&d->tcf_bindcnt) - bind;
 	spin_lock_bh(&d->tcf_lock);
 	opt.action = d->tcf_action;
@@ -287,7 +285,6 @@ static struct tc_action_ops act_skbmod_ops = {
 	.cleanup	=	tcf_skbmod_cleanup,
 	.size		=	sizeof(struct tcf_skbmod),
 };
-MODULE_ALIAS_NET_ACT("skbmod");
 
 static __net_init int skbmod_init_net(struct net *net)
 {

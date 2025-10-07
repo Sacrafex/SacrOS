@@ -1118,9 +1118,7 @@ static void ccdc_configure(struct isp_ccdc_device *ccdc)
 	struct v4l2_mbus_framefmt *format;
 	const struct v4l2_rect *crop;
 	const struct isp_format_info *fmt_info;
-	struct v4l2_subdev_format fmt_src = {
-		.which = V4L2_SUBDEV_FORMAT_ACTIVE,
-	};
+	struct v4l2_subdev_format fmt_src;
 	unsigned int depth_out;
 	unsigned int depth_in = 0;
 	struct media_pad *pad;
@@ -1140,13 +1138,8 @@ static void ccdc_configure(struct isp_ccdc_device *ccdc)
 	if (ccdc->input == CCDC_INPUT_PARALLEL) {
 		struct v4l2_subdev *sd =
 			to_isp_pipeline(&ccdc->subdev.entity)->external;
-		struct isp_bus_cfg *bus_cfg;
 
-		bus_cfg = v4l2_subdev_to_bus_cfg(sd);
-		if (WARN_ON(!bus_cfg))
-			return;
-
-		parcfg = &bus_cfg->bus.parallel;
+		parcfg = &v4l2_subdev_to_bus_cfg(sd)->bus.parallel;
 		ccdc->bt656 = parcfg->bt656;
 	}
 
@@ -1157,6 +1150,7 @@ static void ccdc_configure(struct isp_ccdc_device *ccdc)
 	 * input format is a non-BT.656 YUV variant.
 	 */
 	fmt_src.pad = pad->index;
+	fmt_src.which = V4L2_SUBDEV_FORMAT_ACTIVE;
 	if (!v4l2_subdev_call(sensor, pad, get_fmt, NULL, &fmt_src)) {
 		fmt_info = omap3isp_video_format_info(fmt_src.format.code);
 		depth_in = fmt_info->width;
@@ -1948,7 +1942,8 @@ __ccdc_get_format(struct isp_ccdc_device *ccdc,
 		  unsigned int pad, enum v4l2_subdev_format_whence which)
 {
 	if (which == V4L2_SUBDEV_FORMAT_TRY)
-		return v4l2_subdev_state_get_format(sd_state, pad);
+		return v4l2_subdev_get_try_format(&ccdc->subdev, sd_state,
+						  pad);
 	else
 		return &ccdc->formats[pad];
 }
@@ -1959,8 +1954,8 @@ __ccdc_get_crop(struct isp_ccdc_device *ccdc,
 		enum v4l2_subdev_format_whence which)
 {
 	if (which == V4L2_SUBDEV_FORMAT_TRY)
-		return v4l2_subdev_state_get_crop(sd_state,
-						  CCDC_PAD_SOURCE_OF);
+		return v4l2_subdev_get_try_crop(&ccdc->subdev, sd_state,
+						CCDC_PAD_SOURCE_OF);
 	else
 		return &ccdc->crop;
 }
@@ -1968,7 +1963,7 @@ __ccdc_get_crop(struct isp_ccdc_device *ccdc,
 /*
  * ccdc_try_format - Try video format on a pad
  * @ccdc: ISP CCDC device
- * @sd_state: V4L2 subdev state
+ * @cfg : V4L2 subdev pad configuration
  * @pad: Pad number
  * @fmt: Format
  */
@@ -2126,7 +2121,7 @@ static void ccdc_try_crop(struct isp_ccdc_device *ccdc,
 /*
  * ccdc_enum_mbus_code - Handle pixel format enumeration
  * @sd     : pointer to v4l2 subdev structure
- * @sd_state: V4L2 subdev state
+ * @cfg : V4L2 subdev pad configuration
  * @code   : pointer to v4l2_subdev_mbus_code_enum structure
  * return -EINVAL or zero on success
  */
@@ -2229,7 +2224,7 @@ static int ccdc_enum_frame_size(struct v4l2_subdev *sd,
 /*
  * ccdc_get_selection - Retrieve a selection rectangle on a pad
  * @sd: ISP CCDC V4L2 subdevice
- * @sd_state: V4L2 subdev state
+ * @cfg: V4L2 subdev pad configuration
  * @sel: Selection rectangle
  *
  * The only supported rectangles are the crop rectangles on the output formatter
@@ -2273,7 +2268,7 @@ static int ccdc_get_selection(struct v4l2_subdev *sd,
 /*
  * ccdc_set_selection - Set a selection rectangle on a pad
  * @sd: ISP CCDC V4L2 subdevice
- * @sd_state: V4L2 subdev state
+ * @cfg: V4L2 subdev pad configuration
  * @sel: Selection rectangle
  *
  * The only supported rectangle is the actual crop rectangle on the output
@@ -2321,7 +2316,7 @@ static int ccdc_set_selection(struct v4l2_subdev *sd,
 /*
  * ccdc_get_format - Retrieve the video format on a pad
  * @sd : ISP CCDC V4L2 subdevice
- * @sd_state: V4L2 subdev state
+ * @cfg: V4L2 subdev pad configuration
  * @fmt: Format
  *
  * Return 0 on success or -EINVAL if the pad is invalid or doesn't correspond
@@ -2345,7 +2340,7 @@ static int ccdc_get_format(struct v4l2_subdev *sd,
 /*
  * ccdc_set_format - Set the video format on a pad
  * @sd : ISP CCDC V4L2 subdevice
- * @sd_state: V4L2 subdev state
+ * @cfg: V4L2 subdev pad configuration
  * @fmt: Format
  *
  * Return 0 on success or -EINVAL if the pad is invalid or doesn't correspond
@@ -2440,11 +2435,7 @@ static int ccdc_link_validate(struct v4l2_subdev *sd,
 	if (ccdc->input == CCDC_INPUT_PARALLEL) {
 		struct v4l2_subdev *sd =
 			media_entity_to_v4l2_subdev(link->source->entity);
-		struct isp_bus_cfg *bus_cfg;
-
-		bus_cfg = v4l2_subdev_to_bus_cfg(sd);
-		if (WARN_ON(!bus_cfg))
-			return -EPIPE;
+		struct isp_bus_cfg *bus_cfg = v4l2_subdev_to_bus_cfg(sd);
 
 		parallel_shift = bus_cfg->bus.parallel.data_lane_shift;
 	} else {

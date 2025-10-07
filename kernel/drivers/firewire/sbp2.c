@@ -1118,7 +1118,7 @@ static void sbp2_init_workarounds(struct sbp2_target *tgt, u32 model,
 	tgt->workarounds = w;
 }
 
-static const struct scsi_host_template scsi_driver_template;
+static struct scsi_host_template scsi_driver_template;
 static void sbp2_remove(struct fw_unit *unit);
 
 static int sbp2_probe(struct fw_unit *unit, const struct ieee1394_device_id *id)
@@ -1490,7 +1490,7 @@ static int sbp2_scsi_queuecommand(struct Scsi_Host *shost,
 	return retval;
 }
 
-static int sbp2_scsi_sdev_init(struct scsi_device *sdev)
+static int sbp2_scsi_slave_alloc(struct scsi_device *sdev)
 {
 	struct sbp2_logical_unit *lu = sdev->hostdata;
 
@@ -1500,14 +1500,19 @@ static int sbp2_scsi_sdev_init(struct scsi_device *sdev)
 
 	sdev->allow_restart = 1;
 
+	/*
+	 * SBP-2 does not require any alignment, but we set it anyway
+	 * for compatibility with earlier versions of this driver.
+	 */
+	blk_queue_update_dma_alignment(sdev->request_queue, 4 - 1);
+
 	if (lu->tgt->workarounds & SBP2_WORKAROUND_INQUIRY_36)
 		sdev->inquiry_len = 36;
 
 	return 0;
 }
 
-static int sbp2_scsi_sdev_configure(struct scsi_device *sdev,
-				    struct queue_limits *lim)
+static int sbp2_scsi_slave_configure(struct scsi_device *sdev)
 {
 	struct sbp2_logical_unit *lu = sdev->hostdata;
 
@@ -1533,7 +1538,7 @@ static int sbp2_scsi_sdev_configure(struct scsi_device *sdev,
 		sdev->start_stop_pwr_cond = 1;
 
 	if (lu->tgt->workarounds & SBP2_WORKAROUND_128K_MAX_TRANS)
-		lim->max_hw_sectors = 128 * 1024 / 512;
+		blk_queue_max_hw_sectors(sdev->request_queue, 128 * 1024 / 512);
 
 	return 0;
 }
@@ -1585,13 +1590,13 @@ static struct attribute *sbp2_scsi_sysfs_attrs[] = {
 
 ATTRIBUTE_GROUPS(sbp2_scsi_sysfs);
 
-static const struct scsi_host_template scsi_driver_template = {
+static struct scsi_host_template scsi_driver_template = {
 	.module			= THIS_MODULE,
 	.name			= "SBP-2 IEEE-1394",
 	.proc_name		= "sbp2",
 	.queuecommand		= sbp2_scsi_queuecommand,
-	.sdev_init		= sbp2_scsi_sdev_init,
-	.sdev_configure		= sbp2_scsi_sdev_configure,
+	.slave_alloc		= sbp2_scsi_slave_alloc,
+	.slave_configure	= sbp2_scsi_slave_configure,
 	.eh_abort_handler	= sbp2_scsi_abort,
 	.this_id		= -1,
 	.sg_tablesize		= SG_ALL,

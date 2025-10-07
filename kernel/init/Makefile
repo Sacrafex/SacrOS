@@ -12,7 +12,6 @@ else
 obj-$(CONFIG_BLK_DEV_INITRD)   += initramfs.o
 endif
 obj-$(CONFIG_GENERIC_CALIBRATE_DELAY) += calibrate.o
-obj-$(CONFIG_INITRAMFS_TEST)   += initramfs_test.o
 
 obj-y                          += init_task.o
 
@@ -30,7 +29,7 @@ preempt-flag-$(CONFIG_PREEMPT_DYNAMIC)	:= PREEMPT_DYNAMIC
 preempt-flag-$(CONFIG_PREEMPT_RT)	:= PREEMPT_RT
 
 build-version = $(or $(KBUILD_BUILD_VERSION), $(build-version-auto))
-build-timestamp = $(or $(KBUILD_BUILD_TIMESTAMP), $(build-timestamp-auto))
+build-timestamp = $(or $(KBUILD_BUILD_VERSION_TIMESTAMP), $(KBUILD_BUILD_TIMESTAMP), $(build-timestamp-auto))
 
 # Maximum length of UTS_VERSION is 64 chars
 filechk_uts_version = \
@@ -53,7 +52,7 @@ CFLAGS_version.o := -include $(obj)/utsversion-tmp.h
 # Build version-timestamp.c with final UTS_VERSION
 #
 
-include/generated/utsversion.h: build-version-auto = $(shell $(srctree)/scripts/build-version)
+include/generated/utsversion.h: build-version-auto = $(shell $(srctree)/$(src)/build-version)
 include/generated/utsversion.h: build-timestamp-auto = $(shell LC_ALL=C date)
 include/generated/utsversion.h: FORCE
 	$(call filechk,uts_version)

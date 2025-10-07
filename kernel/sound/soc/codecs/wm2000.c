@@ -891,10 +891,8 @@ static int wm2000_i2c_probe(struct i2c_client *i2c)
 	}
 
 	ret = request_firmware(&fw, filename, &i2c->dev);
-	if (ret != 0) {
-		dev_err(&i2c->dev, "Failed to acquire ANC data: %d\n", ret);
+	if (ret != 0)
 		goto err_supplies;
-	}
 
 	/* Pre-cook the concatenation of the register address onto the image */
 	wm2000->anc_download_size = fw->size + 2;
@@ -929,7 +927,7 @@ out:
 }
 
 static const struct i2c_device_id wm2000_i2c_id[] = {
-	{ "wm2000" },
+	{ "wm2000", 0 },
 	{ }
 };
 MODULE_DEVICE_TABLE(i2c, wm2000_i2c_id);
@@ -938,7 +936,7 @@ static struct i2c_driver wm2000_i2c_driver = {
 	.driver = {
 		.name = "wm2000",
 	},
-	.probe = wm2000_i2c_probe,
+	.probe_new = wm2000_i2c_probe,
 	.id_table = wm2000_i2c_id,
 };
 

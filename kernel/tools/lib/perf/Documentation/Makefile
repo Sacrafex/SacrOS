@@ -35,7 +35,7 @@ htmldir  = $(docdir)/html
 exdir    = $(docdir)/examples
 
 ASCIIDOC        = asciidoc
-ASCIIDOC_EXTRA  = --unsafe -f asciidoc.conf
+ASCIIDOC_EXTRA  =
 ASCIIDOC_HTML   = xhtml11
 MANPAGE_XSL     = manpage-normal.xsl
 XMLTO_EXTRA     =
@@ -121,7 +121,7 @@ install-man: all
 		$(INSTALL) -d -m 755 $(DESTDIR)$(man7dir); \
 		$(INSTALL) -m 644 $(MAN_7) $(DESTDIR)$(man7dir);
 
-install-html: $(MAN_HTML)
+install-html:
 	$(call QUIET_INSTALL, html) \
 		$(INSTALL) -d -m 755 $(DESTDIR)$(htmldir); \
 		$(INSTALL) -m 644 $(MAN_HTML) $(DESTDIR)$(htmldir); \

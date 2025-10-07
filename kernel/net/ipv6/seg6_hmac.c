@@ -35,20 +35,13 @@
 #include <net/xfrm.h>
 
 #include <crypto/hash.h>
-#include <crypto/utils.h>
+#include <crypto/algapi.h>
 #include <net/seg6.h>
 #include <net/genetlink.h>
 #include <net/seg6_hmac.h>
 #include <linux/random.h>
 
-struct hmac_storage {
-	local_lock_t bh_lock;
-	char hmac_ring[SEG6_HMAC_RING_SIZE];
-};
-
-static DEFINE_PER_CPU(struct hmac_storage, hmac_storage) = {
-	.bh_lock = INIT_LOCAL_LOCK(bh_lock),
-};
+static DEFINE_PER_CPU(char [SEG6_HMAC_RING_SIZE], hmac_ring);
 
 static int seg6_hmac_cmpfn(struct rhashtable_compare_arg *arg, const void *obj)
 {
@@ -195,8 +188,7 @@ int seg6_hmac_compute(struct seg6_hmac_info *hinfo, struct ipv6_sr_hdr *hdr,
 	 */
 
 	local_bh_disable();
-	local_lock_nested_bh(&hmac_storage.bh_lock);
-	ring = this_cpu_ptr(hmac_storage.hmac_ring);
+	ring = this_cpu_ptr(hmac_ring);
 	off = ring;
 
 	/* source address */
@@ -221,7 +213,6 @@ int seg6_hmac_compute(struct seg6_hmac_info *hinfo, struct ipv6_sr_hdr *hdr,
 
 	dgsize = __do_hmac(hinfo, ring, plen, tmp_out,
 			   SEG6_HMAC_MAX_DIGESTSIZE);
-	local_unlock_nested_bh(&hmac_storage.bh_lock);
 	local_bh_enable();
 
 	if (dgsize < 0)
@@ -251,7 +242,6 @@ bool seg6_hmac_validate_skb(struct sk_buff *skb)
 	struct sr6_tlv_hmac *tlv;
 	struct ipv6_sr_hdr *srh;
 	struct inet6_dev *idev;
-	int require_hmac;
 
 	idev = __in6_dev_get(skb->dev);
 
@@ -259,17 +249,16 @@ bool seg6_hmac_validate_skb(struct sk_buff *skb)
 
 	tlv = seg6_get_tlv_hmac(srh);
 
-	require_hmac = READ_ONCE(idev->cnf.seg6_require_hmac);
 	/* mandatory check but no tlv */
-	if (require_hmac > 0 && !tlv)
+	if (idev->cnf.seg6_require_hmac > 0 && !tlv)
 		return false;
 
 	/* no check */
-	if (require_hmac < 0)
+	if (idev->cnf.seg6_require_hmac < 0)
 		return true;
 
 	/* check only if present */
-	if (require_hmac == 0 && !tlv)
+	if (idev->cnf.seg6_require_hmac == 0 && !tlv)
 		return true;
 
 	/* now, seg6_require_hmac >= 0 && tlv */

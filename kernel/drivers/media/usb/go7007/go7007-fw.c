@@ -1289,8 +1289,8 @@ static int avsync_to_package(struct go7007 *go, __le16 *code, int space)
 		0xbf99,		(u16)((-adjratio) >> 16),
 		0xbf92,		0,
 		0xbf93,		0,
-		0xbff4,		max(f1, f2),
-		0xbff5,		min(f1, f2),
+		0xbff4,		f1 > f2 ? f1 : f2,
+		0xbff5,		f1 < f2 ? f1 : f2,
 		0xbff6,		f1 < f2 ? ratio : ratio + 1,
 		0xbff7,		f1 > f2 ? ratio : ratio + 1,
 		0xbff8,		0,
@@ -1565,12 +1565,8 @@ int go7007_construct_fw_image(struct go7007 *go, u8 **fw, int *fwlen)
 	default:
 		return -1;
 	}
-	if (request_firmware(&fw_entry, GO7007_FW_NAME, go->dev)) {
-		dev_err(go->dev,
-			"unable to load firmware from file \"%s\"\n",
-			GO7007_FW_NAME);
+	if (request_firmware(&fw_entry, GO7007_FW_NAME, go->dev))
 		return -1;
-	}
 	code = kcalloc(codespace, 2, GFP_KERNEL);
 	if (code == NULL)
 		goto fw_failed;

@@ -10,7 +10,7 @@
 #include <linux/platform_device.h>
 #include <linux/of_platform.h>
 #include <linux/slab.h>
-#include <linux/firmware/qcom/qcom_scm.h>
+#include <linux/qcom_scm.h>
 
 #define LMH_NODE_DCVS			0x44435653
 #define LMH_CLUSTER0_NODE_ID		0x6370302D
@@ -209,7 +209,7 @@ static int lmh_probe(struct platform_device *pdev)
 	}
 
 	lmh_data->irq = platform_get_irq(pdev, 0);
-	lmh_data->domain = irq_domain_create_linear(dev_fwnode(dev), 1, &lmh_irq_ops, lmh_data);
+	lmh_data->domain = irq_domain_add_linear(np, 1, &lmh_irq_ops, lmh_data);
 	if (!lmh_data->domain) {
 		dev_err(dev, "Error adding irq_domain\n");
 		return -EINVAL;

@@ -5,7 +5,7 @@
  * Copyright (c) 2016, Jelle van der Waa <jelle@vdwaa.nl>
  */
 
-#include <linux/unaligned.h>
+#include <asm/unaligned.h>
 #include <linux/module.h>
 #include <linux/i2c.h>
 #include <linux/iio/iio.h>
@@ -88,7 +88,8 @@ static const struct iio_info dmard09_info = {
 	.read_raw	= dmard09_read_raw,
 };
 
-static int dmard09_probe(struct i2c_client *client)
+static int dmard09_probe(struct i2c_client *client,
+			const struct i2c_device_id *id)
 {
 	int ret;
 	struct iio_dev *indio_dev;
@@ -125,8 +126,8 @@ static int dmard09_probe(struct i2c_client *client)
 }
 
 static const struct i2c_device_id dmard09_id[] = {
-	{ "dmard09" },
-	{ }
+	{ "dmard09", 0 },
+	{ },
 };
 
 MODULE_DEVICE_TABLE(i2c, dmard09_id);

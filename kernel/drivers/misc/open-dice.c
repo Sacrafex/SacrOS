@@ -90,17 +90,19 @@ static int open_dice_mmap(struct file *filp, struct vm_area_struct *vma)
 {
 	struct open_dice_drvdata *drvdata = to_open_dice_drvdata(filp);
 
-	if (vma->vm_flags & VM_MAYSHARE) {
-		/* Do not allow userspace to modify the underlying data. */
-		if (vma->vm_flags & VM_WRITE)
-			return -EPERM;
-		/* Ensure userspace cannot acquire VM_WRITE later. */
-		vm_flags_clear(vma, VM_MAYWRITE);
-	}
+	/* Do not allow userspace to modify the underlying data. */
+	if ((vma->vm_flags & VM_WRITE) && (vma->vm_flags & VM_SHARED))
+		return -EPERM;
+
+	/* Ensure userspace cannot acquire VM_WRITE + VM_SHARED later. */
+	if (vma->vm_flags & VM_WRITE)
+		vma->vm_flags &= ~VM_MAYSHARE;
+	else if (vma->vm_flags & VM_SHARED)
+		vma->vm_flags &= ~VM_MAYWRITE;
 
 	/* Create write-combine mapping so all clients observe a wipe. */
 	vma->vm_page_prot = pgprot_writecombine(vma->vm_page_prot);
-	vm_flags_set(vma, VM_DONTCOPY | VM_DONTDUMP);
+	vma->vm_flags |= VM_DONTCOPY | VM_DONTDUMP;
 	return vm_iomap_memory(vma, drvdata->rmem->base, drvdata->rmem->size);
 }
 
@@ -165,11 +167,12 @@ static int __init open_dice_probe(struct platform_device *pdev)
 	return 0;
 }
 
-static void open_dice_remove(struct platform_device *pdev)
+static int open_dice_remove(struct platform_device *pdev)
 {
 	struct open_dice_drvdata *drvdata = platform_get_drvdata(pdev);
 
 	misc_deregister(&drvdata->misc);
+	return 0;
 }
 
 static const struct of_device_id open_dice_of_match[] = {
@@ -201,6 +204,5 @@ static void __exit open_dice_exit(void)
 module_init(open_dice_init);
 module_exit(open_dice_exit);
 
-MODULE_DESCRIPTION("Driver for Open Profile for DICE.");
 MODULE_LICENSE("GPL v2");
 MODULE_AUTHOR("David Brazdil <dbrazdil@google.com>");

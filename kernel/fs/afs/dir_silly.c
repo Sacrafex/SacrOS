@@ -113,14 +113,16 @@ int afs_sillyrename(struct afs_vnode *dvnode, struct afs_vnode *vnode,
 
 	sdentry = NULL;
 	do {
+		int slen;
+
 		dput(sdentry);
 		sillycounter++;
 
 		/* Create a silly name.  Note that the ".__afs" prefix is
 		 * understood by the salvager and must not be changed.
 		 */
-		scnprintf(silly, sizeof(silly), ".__afs%04X", sillycounter);
-		sdentry = lookup_noperm(&QSTR(silly), dentry->d_parent);
+		slen = scnprintf(silly, sizeof(silly), ".__afs%04X", sillycounter);
+		sdentry = lookup_one_len(silly, dentry->d_parent, slen);
 
 		/* N.B. Better to return EBUSY here ... it could be dangerous
 		 * to delete the file while it's in use.
@@ -216,7 +218,7 @@ static int afs_do_silly_unlink(struct afs_vnode *dvnode, struct afs_vnode *vnode
 	/* If there was a conflict with a third party, check the status of the
 	 * unlinked vnode.
 	 */
-	if (op->cumul_error.error == 0 && (op->flags & AFS_OPERATION_DIR_CONFLICT)) {
+	if (op->error == 0 && (op->flags & AFS_OPERATION_DIR_CONFLICT)) {
 		op->file[1].update_ctime = false;
 		op->fetch_status.which = 1;
 		op->ops = &afs_fetch_status_operation;

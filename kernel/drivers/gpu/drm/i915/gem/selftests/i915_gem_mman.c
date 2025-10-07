@@ -8,7 +8,6 @@
 #include <linux/prime_numbers.h>
 
 #include "gem/i915_gem_internal.h"
-#include "gem/i915_gem_lmem.h"
 #include "gem/i915_gem_region.h"
 #include "gem/i915_gem_ttm.h"
 #include "gem/i915_gem_ttm_move.h"
@@ -17,7 +16,6 @@
 #include "gt/intel_gt.h"
 #include "gt/intel_gt_pm.h"
 #include "gt/intel_migrate.h"
-#include "i915_reg.h"
 #include "i915_ttm_buddy_manager.h"
 
 #include "huge_gem_object.h"
@@ -97,11 +95,11 @@ static int check_partial_mapping(struct drm_i915_gem_object *obj,
 	struct drm_i915_private *i915 = to_i915(obj->base.dev);
 	struct i915_gtt_view view;
 	struct i915_vma *vma;
-	unsigned long offset;
 	unsigned long page;
 	u32 __iomem *io;
 	struct page *p;
 	unsigned int n;
+	u64 offset;
 	u32 *cpu;
 	int err;
 
@@ -158,7 +156,7 @@ static int check_partial_mapping(struct drm_i915_gem_object *obj,
 	cpu = kmap(p) + offset_in_page(offset);
 	drm_clflush_virt_range(cpu, sizeof(*cpu));
 	if (*cpu != (u32)page) {
-		pr_err("Partial view for %lu [%u] (offset=%llu, size=%u [%llu, row size %u], fence=%d, tiling=%d, stride=%d) misalignment, expected write to page (%lu + %u [0x%lx]) of 0x%x, found 0x%x\n",
+		pr_err("Partial view for %lu [%u] (offset=%llu, size=%u [%llu, row size %u], fence=%d, tiling=%d, stride=%d) misalignment, expected write to page (%llu + %u [0x%llx]) of 0x%x, found 0x%x\n",
 		       page, n,
 		       view.partial.offset,
 		       view.partial.size,
@@ -214,10 +212,10 @@ static int check_partial_mappings(struct drm_i915_gem_object *obj,
 	for_each_prime_number_from(page, 1, npages) {
 		struct i915_gtt_view view =
 			compute_partial_view(obj, page, MIN_CHUNK_PAGES);
-		unsigned long offset;
 		u32 __iomem *io;
 		struct page *p;
 		unsigned int n;
+		u64 offset;
 		u32 *cpu;
 
 		GEM_BUG_ON(view.partial.size > nreal);
@@ -254,7 +252,7 @@ static int check_partial_mappings(struct drm_i915_gem_object *obj,
 		cpu = kmap(p) + offset_in_page(offset);
 		drm_clflush_virt_range(cpu, sizeof(*cpu));
 		if (*cpu != (u32)page) {
-			pr_err("Partial view for %lu [%u] (offset=%llu, size=%u [%llu, row size %u], fence=%d, tiling=%d, stride=%d) misalignment, expected write to page (%lu + %u [0x%lx]) of 0x%x, found 0x%x\n",
+			pr_err("Partial view for %lu [%u] (offset=%llu, size=%u [%llu, row size %u], fence=%d, tiling=%d, stride=%d) misalignment, expected write to page (%llu + %u [0x%llx]) of 0x%x, found 0x%x\n",
 			       page, n,
 			       view.partial.offset,
 			       view.partial.size,
@@ -566,8 +564,10 @@ retry:
 			goto err_unpin;
 		}
 
-		err = i915_vma_move_to_active(vma, rq,
-					      EXEC_OBJECT_WRITE);
+		err = i915_request_await_object(rq, vma->obj, true);
+		if (err == 0)
+			err = i915_vma_move_to_active(vma, rq,
+						      EXEC_OBJECT_WRITE);
 
 		i915_request_add(rq);
 err_unpin:
@@ -630,14 +630,14 @@ static bool assert_mmap_offset(struct drm_i915_private *i915,
 static void disable_retire_worker(struct drm_i915_private *i915)
 {
 	i915_gem_driver_unregister__shrinker(i915);
-	intel_gt_pm_get_untracked(to_gt(i915));
+	intel_gt_pm_get(to_gt(i915));
 	cancel_delayed_work_sync(&to_gt(i915)->requests.retire_work);
 }
 
 static void restore_retire_worker(struct drm_i915_private *i915)
 {
 	igt_flush_test(i915);
-	intel_gt_pm_put_untracked(to_gt(i915));
+	intel_gt_pm_put(to_gt(i915));
 	i915_gem_driver_register__shrinker(i915);
 }
 
@@ -778,7 +778,6 @@ err_obj:
 
 static int gtt_set(struct drm_i915_gem_object *obj)
 {
-	intel_wakeref_t wakeref;
 	struct i915_vma *vma;
 	void __iomem *map;
 	int err = 0;
@@ -787,7 +786,7 @@ static int gtt_set(struct drm_i915_gem_object *obj)
 	if (IS_ERR(vma))
 		return PTR_ERR(vma);
 
-	wakeref = intel_gt_pm_get(vma->vm->gt);
+	intel_gt_pm_get(vma->vm->gt);
 	map = i915_vma_pin_iomap(vma);
 	i915_vma_unpin(vma);
 	if (IS_ERR(map)) {
@@ -799,13 +798,12 @@ static int gtt_set(struct drm_i915_gem_object *obj)
 	i915_vma_unpin_iomap(vma);
 
 out:
-	intel_gt_pm_put(vma->vm->gt, wakeref);
+	intel_gt_pm_put(vma->vm->gt);
 	return err;
 }
 
 static int gtt_check(struct drm_i915_gem_object *obj)
 {
-	intel_wakeref_t wakeref;
 	struct i915_vma *vma;
 	void __iomem *map;
 	int err = 0;
@@ -814,7 +812,7 @@ static int gtt_check(struct drm_i915_gem_object *obj)
 	if (IS_ERR(vma))
 		return PTR_ERR(vma);
 
-	wakeref = intel_gt_pm_get(vma->vm->gt);
+	intel_gt_pm_get(vma->vm->gt);
 	map = i915_vma_pin_iomap(vma);
 	i915_vma_unpin(vma);
 	if (IS_ERR(map)) {
@@ -830,7 +828,7 @@ static int gtt_check(struct drm_i915_gem_object *obj)
 	i915_vma_unpin_iomap(vma);
 
 out:
-	intel_gt_pm_put(vma->vm->gt, wakeref);
+	intel_gt_pm_put(vma->vm->gt);
 	return err;
 }
 
@@ -1054,7 +1052,7 @@ static int igt_fill_mappable(struct intel_memory_region *mr,
 	int err;
 
 	total = 0;
-	size = resource_size(&mr->io);
+	size = mr->io_size;
 	do {
 		struct drm_i915_gem_object *obj;
 
@@ -1224,7 +1222,7 @@ static int __igt_mmap_migrate(struct intel_memory_region **placements,
 	}
 
 	err = intel_context_migrate_clear(to_gt(i915)->migrate.context, NULL,
-					  obj->mm.pages->sgl, obj->pat_index,
+					  obj->mm.pages->sgl, obj->cache_level,
 					  i915_gem_object_is_lmem(obj),
 					  expand32(POISON_INUSE), &rq);
 	i915_gem_object_unpin_pages(obj);
@@ -1315,34 +1313,34 @@ static int igt_mmap_migrate(void *arg)
 		struct intel_memory_region *mixed[] = { mr, system };
 		struct intel_memory_region *single[] = { mr };
 		struct ttm_resource_manager *man = mr->region_private;
-		struct resource saved_io;
+		resource_size_t saved_io_size;
 		int err;
 
 		if (mr->private)
 			continue;
 
-		if (!resource_size(&mr->io))
+		if (!mr->io_size)
 			continue;
 
 		/*
 		 * For testing purposes let's force small BAR, if not already
 		 * present.
 		 */
-		saved_io = mr->io;
-		if (resource_size(&mr->io) == mr->total) {
-			resource_size_t io_size = resource_size(&mr->io);
+		saved_io_size = mr->io_size;
+		if (mr->io_size == mr->total) {
+			resource_size_t io_size = mr->io_size;
 
 			io_size = rounddown_pow_of_two(io_size >> 1);
 			if (io_size < PAGE_SIZE)
 				continue;
 
-			mr->io = DEFINE_RES_MEM(mr->io.start, io_size);
+			mr->io_size = io_size;
 			i915_ttm_buddy_man_force_visible_size(man,
 							      io_size >> PAGE_SHIFT);
 		}
 
 		/*
-		 * Allocate in the mappable portion, should be no surprises here.
+		 * Allocate in the mappable portion, should be no suprises here.
 		 */
 		err = __igt_mmap_migrate(mixed, ARRAY_SIZE(mixed), mr, 0);
 		if (err)
@@ -1396,9 +1394,9 @@ static int igt_mmap_migrate(void *arg)
 					 IGT_MMAP_MIGRATE_FAIL_GPU |
 					 IGT_MMAP_MIGRATE_UNFAULTABLE);
 out_io_size:
-		mr->io = saved_io;
+		mr->io_size = saved_io_size;
 		i915_ttm_buddy_man_force_visible_size(man,
-						      resource_size(&mr->io) >> PAGE_SHIFT);
+						      mr->io_size >> PAGE_SHIFT);
 		if (err)
 			return err;
 	}
@@ -1609,9 +1607,11 @@ retry:
 			goto out_unpin;
 		}
 
-		err = i915_vma_move_to_active(vma, rq, 0);
+		err = i915_request_await_object(rq, vma->obj, false);
+		if (err == 0)
+			err = i915_vma_move_to_active(vma, rq, 0);
 
-		err = engine->emit_bb_start(rq, i915_vma_offset(vma), 0, 0);
+		err = engine->emit_bb_start(rq, vma->node.start, 0, 0);
 		i915_request_get(rq);
 		i915_request_add(rq);
 
@@ -1683,9 +1683,7 @@ static int igt_mmap_gpu(void *arg)
 
 static int check_present_pte(pte_t *pte, unsigned long addr, void *data)
 {
-	pte_t ptent = ptep_get(pte);
-
-	if (!pte_present(ptent) || pte_none(ptent)) {
+	if (!pte_present(*pte) || pte_none(*pte)) {
 		pr_err("missing PTE:%lx\n",
 		       (addr - (unsigned long)data) >> PAGE_SHIFT);
 		return -EINVAL;
@@ -1696,9 +1694,7 @@ static int check_present_pte(pte_t *pte, unsigned long addr, void *data)
 
 static int check_absent_pte(pte_t *pte, unsigned long addr, void *data)
 {
-	pte_t ptent = ptep_get(pte);
-
-	if (pte_present(ptent) && !pte_none(ptent)) {
+	if (pte_present(*pte) && !pte_none(*pte)) {
 		pr_err("present PTE:%lx; expected to be revoked\n",
 		       (addr - (unsigned long)data) >> PAGE_SHIFT);
 		return -EINVAL;
@@ -1837,8 +1833,6 @@ static int igt_mmap_revoke(void *arg)
 
 int i915_gem_mman_live_selftests(struct drm_i915_private *i915)
 {
-	int ret;
-	bool unuse_mm = false;
 	static const struct i915_subtest tests[] = {
 		SUBTEST(igt_partial_tiling),
 		SUBTEST(igt_smoke_tiling),
@@ -1850,15 +1844,5 @@ int i915_gem_mman_live_selftests(struct drm_i915_private *i915)
 		SUBTEST(igt_mmap_gpu),
 	};
 
-	if (!current->mm) {
-		kthread_use_mm(current->active_mm);
-		unuse_mm = true;
-	}
-
-	ret = i915_live_subtests(tests, i915);
-
-	if (unuse_mm)
-		kthread_unuse_mm(current->active_mm);
-
-	return ret;
+	return i915_live_subtests(tests, i915);
 }

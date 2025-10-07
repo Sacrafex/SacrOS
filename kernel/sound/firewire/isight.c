@@ -77,7 +77,7 @@ struct audio_payload {
 
 MODULE_DESCRIPTION("iSight audio driver");
 MODULE_AUTHOR("Clemens Ladisch <clemens@ladisch.de>");
-MODULE_LICENSE("GPL");
+MODULE_LICENSE("GPL v2");
 
 static struct fw_iso_packet audio_packet = {
 	.payload_length = sizeof(struct audio_payload),
@@ -454,8 +454,7 @@ static int isight_create_pcm(struct isight *isight)
 	if (err < 0)
 		return err;
 	pcm->private_data = isight;
-	pcm->nonatomic = true;
-	strscpy(pcm->name, "iSight");
+	strcpy(pcm->name, "iSight");
 	isight->pcm = pcm->streams[SNDRV_PCM_STREAM_CAPTURE].substream;
 	isight->pcm->ops = &ops;
 	snd_pcm_set_managed_buffer_all(pcm, SNDRV_DMA_TYPE_VMALLOC, NULL, 0, 0);
@@ -638,13 +637,13 @@ static int isight_probe(struct fw_unit *unit,
 
 	card->private_free = isight_card_free;
 
-	strscpy(card->driver, "iSight");
-	strscpy(card->shortname, "Apple iSight");
+	strcpy(card->driver, "iSight");
+	strcpy(card->shortname, "Apple iSight");
 	snprintf(card->longname, sizeof(card->longname),
 		 "Apple iSight (GUID %08x%08x) at %s, S%d",
 		 fw_dev->config_rom[3], fw_dev->config_rom[4],
 		 dev_name(&unit->device), 100 << fw_dev->max_speed);
-	strscpy(card->mixername, "iSight");
+	strcpy(card->mixername, "iSight");
 
 	err = isight_create_pcm(isight);
 	if (err < 0)

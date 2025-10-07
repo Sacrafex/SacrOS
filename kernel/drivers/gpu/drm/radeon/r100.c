@@ -26,7 +26,6 @@
  *          Jerome Glisse
  */
 
-#include <linux/debugfs.h>
 #include <linux/firmware.h>
 #include <linux/module.h>
 #include <linux/pci.h>
@@ -459,7 +458,7 @@ void r100_pm_misc(struct radeon_device *rdev)
  */
 void r100_pm_prepare(struct radeon_device *rdev)
 {
-	struct drm_device *ddev = rdev_to_drm(rdev);
+	struct drm_device *ddev = rdev->ddev;
 	struct drm_crtc *crtc;
 	struct radeon_crtc *radeon_crtc;
 	u32 tmp;
@@ -490,7 +489,7 @@ void r100_pm_prepare(struct radeon_device *rdev)
  */
 void r100_pm_finish(struct radeon_device *rdev)
 {
-	struct drm_device *ddev = rdev_to_drm(rdev);
+	struct drm_device *ddev = rdev->ddev;
 	struct drm_crtc *crtc;
 	struct radeon_crtc *radeon_crtc;
 	u32 tmp;
@@ -603,7 +602,7 @@ void r100_hpd_set_polarity(struct radeon_device *rdev,
  */
 void r100_hpd_init(struct radeon_device *rdev)
 {
-	struct drm_device *dev = rdev_to_drm(rdev);
+	struct drm_device *dev = rdev->ddev;
 	struct drm_connector *connector;
 	unsigned enable = 0;
 
@@ -626,7 +625,7 @@ void r100_hpd_init(struct radeon_device *rdev)
  */
 void r100_hpd_fini(struct radeon_device *rdev)
 {
-	struct drm_device *dev = rdev_to_drm(rdev);
+	struct drm_device *dev = rdev->ddev;
 	struct drm_connector *connector;
 	unsigned disable = 0;
 
@@ -798,7 +797,7 @@ int r100_irq_process(struct radeon_device *rdev)
 		/* Vertical blank interrupts */
 		if (status & RADEON_CRTC_VBLANK_STAT) {
 			if (rdev->irq.crtc_vblank_int[0]) {
-				drm_handle_vblank(rdev_to_drm(rdev), 0);
+				drm_handle_vblank(rdev->ddev, 0);
 				rdev->pm.vblank_sync = true;
 				wake_up(&rdev->irq.vblank_queue);
 			}
@@ -807,7 +806,7 @@ int r100_irq_process(struct radeon_device *rdev)
 		}
 		if (status & RADEON_CRTC2_VBLANK_STAT) {
 			if (rdev->irq.crtc_vblank_int[1]) {
-				drm_handle_vblank(rdev_to_drm(rdev), 1);
+				drm_handle_vblank(rdev->ddev, 1);
 				rdev->pm.vblank_sync = true;
 				wake_up(&rdev->irq.vblank_queue);
 			}
@@ -1078,9 +1077,7 @@ static int r100_cp_init_microcode(struct radeon_device *rdev)
 	}
 
 	err = request_firmware(&rdev->me_fw, fw_name, rdev->dev);
-	if (err) {
-		pr_err("radeon_cp: Failed to load firmware \"%s\"\n", fw_name);
-	} else if (rdev->me_fw->size % 8) {
+	if (err == 0 && rdev->me_fw->size % 8) {
 		pr_err("radeon_cp: Bogus length %zu in firmware \"%s\"\n",
 		       rdev->me_fw->size, fw_name);
 		err = -EINVAL;
@@ -1348,7 +1345,7 @@ int r100_packet3_load_vbpntr(struct radeon_cs_parser *p,
 	    return -EINVAL;
 	}
 	track->num_arrays = c;
-	for (i = 0; i < (c - 1); i += 2, idx += 3) {
+	for (i = 0; i < (c - 1); i+=2, idx+=3) {
 		r = radeon_cs_packet_next_reloc(p, &reloc, 0);
 		if (r) {
 			DRM_ERROR("No reloc for packet3 %d\n",
@@ -1491,7 +1488,7 @@ int r100_cs_packet_parse_vline(struct radeon_cs_parser *p)
 	header = radeon_get_ib_value(p, h_idx);
 	crtc_id = radeon_get_ib_value(p, h_idx + 5);
 	reg = R100_CP_PACKET0_GET_REG(header);
-	crtc = drm_crtc_find(rdev_to_drm(p->rdev), p->filp, crtc_id);
+	crtc = drm_crtc_find(p->rdev->ddev, p->filp, crtc_id);
 	if (!crtc) {
 		DRM_ERROR("cannot find crtc %d\n", crtc_id);
 		return -ENOENT;
@@ -2950,7 +2947,7 @@ static void r100_set_safe_registers(struct radeon_device *rdev)
 #if defined(CONFIG_DEBUG_FS)
 static int r100_debugfs_rbbm_info_show(struct seq_file *m, void *unused)
 {
-	struct radeon_device *rdev = m->private;
+	struct radeon_device *rdev = (struct radeon_device *)m->private;
 	uint32_t reg, value;
 	unsigned i;
 
@@ -2969,7 +2966,7 @@ static int r100_debugfs_rbbm_info_show(struct seq_file *m, void *unused)
 
 static int r100_debugfs_cp_ring_info_show(struct seq_file *m, void *unused)
 {
-	struct radeon_device *rdev = m->private;
+	struct radeon_device *rdev = (struct radeon_device *)m->private;
 	struct radeon_ring *ring = &rdev->ring[RADEON_RING_TYPE_GFX_INDEX];
 	uint32_t rdp, wdp;
 	unsigned count, i, j;
@@ -2995,7 +2992,7 @@ static int r100_debugfs_cp_ring_info_show(struct seq_file *m, void *unused)
 
 static int r100_debugfs_cp_csq_fifo_show(struct seq_file *m, void *unused)
 {
-	struct radeon_device *rdev = m->private;
+	struct radeon_device *rdev = (struct radeon_device *)m->private;
 	uint32_t csq_stat, csq2_stat, tmp;
 	unsigned r_rptr, r_wptr, ib1_rptr, ib1_wptr, ib2_rptr, ib2_wptr;
 	unsigned i;
@@ -3043,7 +3040,7 @@ static int r100_debugfs_cp_csq_fifo_show(struct seq_file *m, void *unused)
 
 static int r100_debugfs_mc_info_show(struct seq_file *m, void *unused)
 {
-	struct radeon_device *rdev = m->private;
+	struct radeon_device *rdev = (struct radeon_device *)m->private;
 	uint32_t tmp;
 
 	tmp = RREG32(RADEON_CONFIG_MEMSIZE);
@@ -3079,7 +3076,7 @@ DEFINE_SHOW_ATTRIBUTE(r100_debugfs_mc_info);
 void  r100_debugfs_rbbm_init(struct radeon_device *rdev)
 {
 #if defined(CONFIG_DEBUG_FS)
-	struct dentry *root = rdev_to_drm(rdev)->primary->debugfs_root;
+	struct dentry *root = rdev->ddev->primary->debugfs_root;
 
 	debugfs_create_file("r100_rbbm_info", 0444, root, rdev,
 			    &r100_debugfs_rbbm_info_fops);
@@ -3089,7 +3086,7 @@ void  r100_debugfs_rbbm_init(struct radeon_device *rdev)
 void r100_debugfs_cp_init(struct radeon_device *rdev)
 {
 #if defined(CONFIG_DEBUG_FS)
-	struct dentry *root = rdev_to_drm(rdev)->primary->debugfs_root;
+	struct dentry *root = rdev->ddev->primary->debugfs_root;
 
 	debugfs_create_file("r100_cp_ring_info", 0444, root, rdev,
 			    &r100_debugfs_cp_ring_info_fops);
@@ -3101,7 +3098,7 @@ void r100_debugfs_cp_init(struct radeon_device *rdev)
 void  r100_debugfs_mc_info_init(struct radeon_device *rdev)
 {
 #if defined(CONFIG_DEBUG_FS)
-	struct dentry *root = rdev_to_drm(rdev)->primary->debugfs_root;
+	struct dentry *root = rdev->ddev->primary->debugfs_root;
 
 	debugfs_create_file("r100_mc_info", 0444, root, rdev,
 			    &r100_debugfs_mc_info_fops);
@@ -3967,7 +3964,7 @@ int r100_resume(struct radeon_device *rdev)
 			RREG32(R_0007C0_CP_STAT));
 	}
 	/* post */
-	radeon_combios_asic_init(rdev_to_drm(rdev));
+	radeon_combios_asic_init(rdev->ddev);
 	/* Resume clock after posting */
 	r100_clock_startup(rdev);
 	/* Initialize surface registers */
@@ -4076,7 +4073,7 @@ int r100_init(struct radeon_device *rdev)
 	/* Set asic errata */
 	r100_errata(rdev);
 	/* Initialize clocks */
-	radeon_get_clock_info(rdev_to_drm(rdev));
+	radeon_get_clock_info(rdev->ddev);
 	/* initialize AGP */
 	if (rdev->flags & RADEON_IS_AGP) {
 		r = radeon_agp_init(rdev);

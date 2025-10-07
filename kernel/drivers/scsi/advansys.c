@@ -4054,8 +4054,6 @@ static int AscInitAsc1000Driver(ASC_DVC_VAR *asc_dvc)
 
 	err = request_firmware(&fw, fwname, asc_dvc->drv_ptr->dev);
 	if (err) {
-		printk(KERN_ERR "Failed to load image \"%s\" err %d\n",
-		       fwname, err);
 		asc_dvc->err_code |= ASC_IERR_MCODE_CHKSUM;
 		return err;
 	}
@@ -4420,8 +4418,6 @@ static int AdvInitAsc3550Driver(ADV_DVC_VAR *asc_dvc)
 
 	err = request_firmware(&fw, fwname, asc_dvc->drv_ptr->dev);
 	if (err) {
-		printk(KERN_ERR "Failed to load image \"%s\" err %d\n",
-		       fwname, err);
 		asc_dvc->err_code = ASC_IERR_MCODE_CHKSUM;
 		return err;
 	}
@@ -4496,7 +4492,7 @@ static int AdvInitAsc3550Driver(ADV_DVC_VAR *asc_dvc)
 
 	/*
 	 * Microcode operating variables for WDTR, SDTR, and command tag
-	 * queuing will be set in sdev_configure() based on what a
+	 * queuing will be set in slave_configure() based on what a
 	 * device reports it is capable of in Inquiry byte 7.
 	 *
 	 * If SCSI Bus Resets have been disabled, then directly set
@@ -4920,8 +4916,6 @@ static int AdvInitAsc38C0800Driver(ADV_DVC_VAR *asc_dvc)
 
 	err = request_firmware(&fw, fwname, asc_dvc->drv_ptr->dev);
 	if (err) {
-		printk(KERN_ERR "Failed to load image \"%s\" err %d\n",
-		       fwname, err);
 		asc_dvc->err_code = ASC_IERR_MCODE_CHKSUM;
 		return err;
 	}
@@ -5013,7 +5007,7 @@ static int AdvInitAsc38C0800Driver(ADV_DVC_VAR *asc_dvc)
 
 	/*
 	 * Microcode operating variables for WDTR, SDTR, and command tag
-	 * queuing will be set in sdev_configure() based on what a
+	 * queuing will be set in slave_configure() based on what a
 	 * device reports it is capable of in Inquiry byte 7.
 	 *
 	 * If SCSI Bus Resets have been disabled, then directly set
@@ -5408,8 +5402,6 @@ static int AdvInitAsc38C1600Driver(ADV_DVC_VAR *asc_dvc)
 
 	err = request_firmware(&fw, fwname, asc_dvc->drv_ptr->dev);
 	if (err) {
-		printk(KERN_ERR "Failed to load image \"%s\" err %d\n",
-		       fwname, err);
 		asc_dvc->err_code = ASC_IERR_MCODE_CHKSUM;
 		return err;
 	}
@@ -5508,7 +5500,7 @@ static int AdvInitAsc38C1600Driver(ADV_DVC_VAR *asc_dvc)
 
 	/*
 	 * Microcode operating variables for WDTR, SDTR, and command tag
-	 * queuing will be set in sdev_configure() based on what a
+	 * queuing will be set in slave_configure() based on what a
 	 * device reports it is capable of in Inquiry byte 7.
 	 *
 	 * If SCSI Bus Resets have been disabled, then directly set
@@ -7219,7 +7211,7 @@ static void AscAsyncFix(ASC_DVC_VAR *asc_dvc, struct scsi_device *sdev)
 }
 
 static void
-advansys_narrow_sdev_configure(struct scsi_device *sdev, ASC_DVC_VAR *asc_dvc)
+advansys_narrow_slave_configure(struct scsi_device *sdev, ASC_DVC_VAR *asc_dvc)
 {
 	ASC_SCSI_BIT_ID_TYPE tid_bit = 1 << sdev->id;
 	ASC_SCSI_BIT_ID_TYPE orig_use_tagged_qng = asc_dvc->use_tagged_qng;
@@ -7345,7 +7337,7 @@ static void advansys_wide_enable_ppr(ADV_DVC_VAR *adv_dvc,
 }
 
 static void
-advansys_wide_sdev_configure(struct scsi_device *sdev, ADV_DVC_VAR *adv_dvc)
+advansys_wide_slave_configure(struct scsi_device *sdev, ADV_DVC_VAR *adv_dvc)
 {
 	AdvPortAddr iop_base = adv_dvc->iop_base;
 	unsigned short tidmask = 1 << sdev->id;
@@ -7391,17 +7383,16 @@ advansys_wide_sdev_configure(struct scsi_device *sdev, ADV_DVC_VAR *adv_dvc)
  * Set the number of commands to queue per device for the
  * specified host adapter.
  */
-static int advansys_sdev_configure(struct scsi_device *sdev,
-				   struct queue_limits *lim)
+static int advansys_slave_configure(struct scsi_device *sdev)
 {
 	struct asc_board *boardp = shost_priv(sdev->host);
 
 	if (ASC_NARROW_BOARD(boardp))
-		advansys_narrow_sdev_configure(sdev,
-					       &boardp->dvc_var.asc_dvc_var);
+		advansys_narrow_slave_configure(sdev,
+						&boardp->dvc_var.asc_dvc_var);
 	else
-		advansys_wide_sdev_configure(sdev,
-					     &boardp->dvc_var.adv_dvc_var);
+		advansys_wide_slave_configure(sdev,
+						&boardp->dvc_var.adv_dvc_var);
 
 	return 0;
 }
@@ -10603,7 +10594,7 @@ static int AdvInitGetConfig(struct pci_dev *pdev, struct Scsi_Host *shost)
 }
 #endif
 
-static const struct scsi_host_template advansys_template = {
+static struct scsi_host_template advansys_template = {
 	.proc_name = DRV_NAME,
 #ifdef CONFIG_PROC_FS
 	.show_info = advansys_show_info,
@@ -10613,7 +10604,7 @@ static const struct scsi_host_template advansys_template = {
 	.queuecommand = advansys_queuecommand,
 	.eh_host_reset_handler = advansys_reset,
 	.bios_param = advansys_biosparam,
-	.sdev_configure = advansys_sdev_configure,
+	.slave_configure = advansys_slave_configure,
 	.cmd_size = sizeof(struct advansys_cmd),
 };
 
@@ -11409,7 +11400,7 @@ static struct eisa_driver advansys_eisa_driver = {
 };
 
 /* PCI Devices supported by this driver */
-static const struct pci_device_id advansys_pci_tbl[] = {
+static struct pci_device_id advansys_pci_tbl[] = {
 	{PCI_VENDOR_ID_ASP, PCI_DEVICE_ID_ASP_1200A,
 	 PCI_ANY_ID, PCI_ANY_ID, 0, 0, 0},
 	{PCI_VENDOR_ID_ASP, PCI_DEVICE_ID_ASP_ABP940,
@@ -11546,7 +11537,6 @@ static void __exit advansys_exit(void)
 module_init(advansys_init);
 module_exit(advansys_exit);
 
-MODULE_DESCRIPTION("AdvanSys SCSI Adapter driver");
 MODULE_LICENSE("GPL");
 MODULE_FIRMWARE("advansys/mcode.bin");
 MODULE_FIRMWARE("advansys/3550.bin");

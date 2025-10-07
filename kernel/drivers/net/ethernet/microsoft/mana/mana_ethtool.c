@@ -7,12 +7,10 @@
 
 #include <net/mana/mana.h>
 
-struct mana_stats_desc {
+static const struct {
 	char name[ETH_GSTRING_LEN];
 	u16 offset;
-};
-
-static const struct mana_stats_desc mana_eth_stats[] = {
+} mana_eth_stats[] = {
 	{"stop_queue", offsetof(struct mana_ethtool_stats, stop_queue)},
 	{"wake_queue", offsetof(struct mana_ethtool_stats, wake_queue)},
 	{"hc_rx_discards_no_wqe", offsetof(struct mana_ethtool_stats,
@@ -45,8 +43,8 @@ static const struct mana_stats_desc mana_eth_stats[] = {
 	 offsetof(struct mana_ethtool_stats, hc_tx_err_eth_type_enforcement)},
 	{"hc_tx_err_sa_enforcement", offsetof(struct mana_ethtool_stats,
 					      hc_tx_err_sa_enforcement)},
-	{"hc_tx_err_sqpdid_enforcement",
-	 offsetof(struct mana_ethtool_stats, hc_tx_err_sqpdid_enforcement)},
+	{"hc_tx_err_sqpdid_enforecement",
+	 offsetof(struct mana_ethtool_stats, hc_tx_err_sqpdid_enforecement)},
 	{"hc_tx_err_cqpdid_enforcement",
 	 offsetof(struct mana_ethtool_stats, hc_tx_err_cqpdid_enforcement)},
 	{"hc_tx_err_mtu_violation", offsetof(struct mana_ethtool_stats,
@@ -77,59 +75,6 @@ static const struct mana_stats_desc mana_eth_stats[] = {
 					rx_cqe_unknown_type)},
 };
 
-static const struct mana_stats_desc mana_phy_stats[] = {
-	{ "hc_rx_pkt_drop_phy", offsetof(struct mana_ethtool_phy_stats, rx_pkt_drop_phy) },
-	{ "hc_tx_pkt_drop_phy", offsetof(struct mana_ethtool_phy_stats, tx_pkt_drop_phy) },
-	{ "hc_tc0_rx_pkt_phy", offsetof(struct mana_ethtool_phy_stats, rx_pkt_tc0_phy) },
-	{ "hc_tc0_rx_byte_phy", offsetof(struct mana_ethtool_phy_stats, rx_byte_tc0_phy) },
-	{ "hc_tc0_tx_pkt_phy", offsetof(struct mana_ethtool_phy_stats, tx_pkt_tc0_phy) },
-	{ "hc_tc0_tx_byte_phy", offsetof(struct mana_ethtool_phy_stats, tx_byte_tc0_phy) },
-	{ "hc_tc1_rx_pkt_phy", offsetof(struct mana_ethtool_phy_stats, rx_pkt_tc1_phy) },
-	{ "hc_tc1_rx_byte_phy", offsetof(struct mana_ethtool_phy_stats, rx_byte_tc1_phy) },
-	{ "hc_tc1_tx_pkt_phy", offsetof(struct mana_ethtool_phy_stats, tx_pkt_tc1_phy) },
-	{ "hc_tc1_tx_byte_phy", offsetof(struct mana_ethtool_phy_stats, tx_byte_tc1_phy) },
-	{ "hc_tc2_rx_pkt_phy", offsetof(struct mana_ethtool_phy_stats, rx_pkt_tc2_phy) },
-	{ "hc_tc2_rx_byte_phy", offsetof(struct mana_ethtool_phy_stats, rx_byte_tc2_phy) },
-	{ "hc_tc2_tx_pkt_phy", offsetof(struct mana_ethtool_phy_stats, tx_pkt_tc2_phy) },
-	{ "hc_tc2_tx_byte_phy", offsetof(struct mana_ethtool_phy_stats, tx_byte_tc2_phy) },
-	{ "hc_tc3_rx_pkt_phy", offsetof(struct mana_ethtool_phy_stats, rx_pkt_tc3_phy) },
-	{ "hc_tc3_rx_byte_phy", offsetof(struct mana_ethtool_phy_stats, rx_byte_tc3_phy) },
-	{ "hc_tc3_tx_pkt_phy", offsetof(struct mana_ethtool_phy_stats, tx_pkt_tc3_phy) },
-	{ "hc_tc3_tx_byte_phy", offsetof(struct mana_ethtool_phy_stats, tx_byte_tc3_phy) },
-	{ "hc_tc4_rx_pkt_phy", offsetof(struct mana_ethtool_phy_stats, rx_pkt_tc4_phy) },
-	{ "hc_tc4_rx_byte_phy", offsetof(struct mana_ethtool_phy_stats, rx_byte_tc4_phy) },
-	{ "hc_tc4_tx_pkt_phy", offsetof(struct mana_ethtool_phy_stats, tx_pkt_tc4_phy) },
-	{ "hc_tc4_tx_byte_phy", offsetof(struct mana_ethtool_phy_stats, tx_byte_tc4_phy) },
-	{ "hc_tc5_rx_pkt_phy", offsetof(struct mana_ethtool_phy_stats, rx_pkt_tc5_phy) },
-	{ "hc_tc5_rx_byte_phy", offsetof(struct mana_ethtool_phy_stats, rx_byte_tc5_phy) },
-	{ "hc_tc5_tx_pkt_phy", offsetof(struct mana_ethtool_phy_stats, tx_pkt_tc5_phy) },
-	{ "hc_tc5_tx_byte_phy", offsetof(struct mana_ethtool_phy_stats, tx_byte_tc5_phy) },
-	{ "hc_tc6_rx_pkt_phy", offsetof(struct mana_ethtool_phy_stats, rx_pkt_tc6_phy) },
-	{ "hc_tc6_rx_byte_phy", offsetof(struct mana_ethtool_phy_stats, rx_byte_tc6_phy) },
-	{ "hc_tc6_tx_pkt_phy", offsetof(struct mana_ethtool_phy_stats, tx_pkt_tc6_phy) },
-	{ "hc_tc6_tx_byte_phy", offsetof(struct mana_ethtool_phy_stats, tx_byte_tc6_phy) },
-	{ "hc_tc7_rx_pkt_phy", offsetof(struct mana_ethtool_phy_stats, rx_pkt_tc7_phy) },
-	{ "hc_tc7_rx_byte_phy", offsetof(struct mana_ethtool_phy_stats, rx_byte_tc7_phy) },
-	{ "hc_tc7_tx_pkt_phy", offsetof(struct mana_ethtool_phy_stats, tx_pkt_tc7_phy) },
-	{ "hc_tc7_tx_byte_phy", offsetof(struct mana_ethtool_phy_stats, tx_byte_tc7_phy) },
-	{ "hc_tc0_rx_pause_phy", offsetof(struct mana_ethtool_phy_stats, rx_pause_tc0_phy) },
-	{ "hc_tc0_tx_pause_phy", offsetof(struct mana_ethtool_phy_stats, tx_pause_tc0_phy) },
-	{ "hc_tc1_rx_pause_phy", offsetof(struct mana_ethtool_phy_stats, rx_pause_tc1_phy) },
-	{ "hc_tc1_tx_pause_phy", offsetof(struct mana_ethtool_phy_stats, tx_pause_tc1_phy) },
-	{ "hc_tc2_rx_pause_phy", offsetof(struct mana_ethtool_phy_stats, rx_pause_tc2_phy) },
-	{ "hc_tc2_tx_pause_phy", offsetof(struct mana_ethtool_phy_stats, tx_pause_tc2_phy) },
-	{ "hc_tc3_rx_pause_phy", offsetof(struct mana_ethtool_phy_stats, rx_pause_tc3_phy) },
-	{ "hc_tc3_tx_pause_phy", offsetof(struct mana_ethtool_phy_stats, tx_pause_tc3_phy) },
-	{ "hc_tc4_rx_pause_phy", offsetof(struct mana_ethtool_phy_stats, rx_pause_tc4_phy) },
-	{ "hc_tc4_tx_pause_phy", offsetof(struct mana_ethtool_phy_stats, tx_pause_tc4_phy) },
-	{ "hc_tc5_rx_pause_phy", offsetof(struct mana_ethtool_phy_stats, rx_pause_tc5_phy) },
-	{ "hc_tc5_tx_pause_phy", offsetof(struct mana_ethtool_phy_stats, tx_pause_tc5_phy) },
-	{ "hc_tc6_rx_pause_phy", offsetof(struct mana_ethtool_phy_stats, rx_pause_tc6_phy) },
-	{ "hc_tc6_tx_pause_phy", offsetof(struct mana_ethtool_phy_stats, tx_pause_tc6_phy) },
-	{ "hc_tc7_rx_pause_phy", offsetof(struct mana_ethtool_phy_stats, rx_pause_tc7_phy) },
-	{ "hc_tc7_tx_pause_phy", offsetof(struct mana_ethtool_phy_stats, tx_pause_tc7_phy) },
-};
-
 static int mana_get_sset_count(struct net_device *ndev, int stringset)
 {
 	struct mana_port_context *apc = netdev_priv(ndev);
@@ -138,45 +83,61 @@ static int mana_get_sset_count(struct net_device *ndev, int stringset)
 	if (stringset != ETH_SS_STATS)
 		return -EINVAL;
 
-	return ARRAY_SIZE(mana_eth_stats) + ARRAY_SIZE(mana_phy_stats) +
-			num_queues * (MANA_STATS_RX_COUNT + MANA_STATS_TX_COUNT);
+	return ARRAY_SIZE(mana_eth_stats) + num_queues *
+				(MANA_STATS_RX_COUNT + MANA_STATS_TX_COUNT);
 }
 
 static void mana_get_strings(struct net_device *ndev, u32 stringset, u8 *data)
 {
 	struct mana_port_context *apc = netdev_priv(ndev);
 	unsigned int num_queues = apc->num_queues;
+	u8 *p = data;
 	int i;
 
 	if (stringset != ETH_SS_STATS)
 		return;
 
-	for (i = 0; i < ARRAY_SIZE(mana_eth_stats); i++)
-		ethtool_puts(&data, mana_eth_stats[i].name);
-
-	for (i = 0; i < ARRAY_SIZE(mana_phy_stats); i++)
-		ethtool_puts(&data, mana_phy_stats[i].name);
-
-	for (i = 0; i < num_queues; i++) {
-		ethtool_sprintf(&data, "rx_%d_packets", i);
-		ethtool_sprintf(&data, "rx_%d_bytes", i);
-		ethtool_sprintf(&data, "rx_%d_xdp_drop", i);
-		ethtool_sprintf(&data, "rx_%d_xdp_tx", i);
-		ethtool_sprintf(&data, "rx_%d_xdp_redirect", i);
+	for (i = 0; i < ARRAY_SIZE(mana_eth_stats); i++) {
+		memcpy(p, mana_eth_stats[i].name, ETH_GSTRING_LEN);
+		p += ETH_GSTRING_LEN;
 	}
 
 	for (i = 0; i < num_queues; i++) {
-		ethtool_sprintf(&data, "tx_%d_packets", i);
-		ethtool_sprintf(&data, "tx_%d_bytes", i);
-		ethtool_sprintf(&data, "tx_%d_xdp_xmit", i);
-		ethtool_sprintf(&data, "tx_%d_tso_packets", i);
-		ethtool_sprintf(&data, "tx_%d_tso_bytes", i);
-		ethtool_sprintf(&data, "tx_%d_tso_inner_packets", i);
-		ethtool_sprintf(&data, "tx_%d_tso_inner_bytes", i);
-		ethtool_sprintf(&data, "tx_%d_long_pkt_fmt", i);
-		ethtool_sprintf(&data, "tx_%d_short_pkt_fmt", i);
-		ethtool_sprintf(&data, "tx_%d_csum_partial", i);
-		ethtool_sprintf(&data, "tx_%d_mana_map_err", i);
+		sprintf(p, "rx_%d_packets", i);
+		p += ETH_GSTRING_LEN;
+		sprintf(p, "rx_%d_bytes", i);
+		p += ETH_GSTRING_LEN;
+		sprintf(p, "rx_%d_xdp_drop", i);
+		p += ETH_GSTRING_LEN;
+		sprintf(p, "rx_%d_xdp_tx", i);
+		p += ETH_GSTRING_LEN;
+		sprintf(p, "rx_%d_xdp_redirect", i);
+		p += ETH_GSTRING_LEN;
+	}
+
+	for (i = 0; i < num_queues; i++) {
+		sprintf(p, "tx_%d_packets", i);
+		p += ETH_GSTRING_LEN;
+		sprintf(p, "tx_%d_bytes", i);
+		p += ETH_GSTRING_LEN;
+		sprintf(p, "tx_%d_xdp_xmit", i);
+		p += ETH_GSTRING_LEN;
+		sprintf(p, "tx_%d_tso_packets", i);
+		p += ETH_GSTRING_LEN;
+		sprintf(p, "tx_%d_tso_bytes", i);
+		p += ETH_GSTRING_LEN;
+		sprintf(p, "tx_%d_tso_inner_packets", i);
+		p += ETH_GSTRING_LEN;
+		sprintf(p, "tx_%d_tso_inner_bytes", i);
+		p += ETH_GSTRING_LEN;
+		sprintf(p, "tx_%d_long_pkt_fmt", i);
+		p += ETH_GSTRING_LEN;
+		sprintf(p, "tx_%d_short_pkt_fmt", i);
+		p += ETH_GSTRING_LEN;
+		sprintf(p, "tx_%d_csum_partial", i);
+		p += ETH_GSTRING_LEN;
+		sprintf(p, "tx_%d_mana_map_err", i);
+		p += ETH_GSTRING_LEN;
 	}
 }
 
@@ -186,7 +147,6 @@ static void mana_get_ethtool_stats(struct net_device *ndev,
 	struct mana_port_context *apc = netdev_priv(ndev);
 	unsigned int num_queues = apc->num_queues;
 	void *eth_stats = &apc->eth_stats;
-	void *phy_stats = &apc->phy_stats;
 	struct mana_stats_rx *rx_stats;
 	struct mana_stats_tx *tx_stats;
 	unsigned int start;
@@ -210,17 +170,8 @@ static void mana_get_ethtool_stats(struct net_device *ndev,
 	/* we call mana function to update stats from GDMA */
 	mana_query_gf_stats(apc);
 
-	/* We call this mana function to get the phy stats from GDMA and includes
-	 * aggregate tx/rx drop counters, Per-TC(Traffic Channel) tx/rx and pause
-	 * counters.
-	 */
-	mana_query_phy_stats(apc);
-
 	for (q = 0; q < ARRAY_SIZE(mana_eth_stats); q++)
 		data[i++] = *(u64 *)(eth_stats + mana_eth_stats[q].offset);
-
-	for (q = 0; q < ARRAY_SIZE(mana_phy_stats); q++)
-		data[i++] = *(u64 *)(phy_stats + mana_phy_stats[q].offset);
 
 	for (q = 0; q < num_queues; q++) {
 		rx_stats = &apc->rxqs[q]->stats;
@@ -299,28 +250,28 @@ static u32 mana_rss_indir_size(struct net_device *ndev)
 	return apc->indir_table_sz;
 }
 
-static int mana_get_rxfh(struct net_device *ndev,
-			 struct ethtool_rxfh_param *rxfh)
+static int mana_get_rxfh(struct net_device *ndev, u32 *indir, u8 *key,
+			 u8 *hfunc)
 {
 	struct mana_port_context *apc = netdev_priv(ndev);
 	int i;
 
-	rxfh->hfunc = ETH_RSS_HASH_TOP; /* Toeplitz */
+	if (hfunc)
+		*hfunc = ETH_RSS_HASH_TOP; /* Toeplitz */
 
-	if (rxfh->indir) {
+	if (indir) {
 		for (i = 0; i < apc->indir_table_sz; i++)
-			rxfh->indir[i] = apc->indir_table[i];
+			indir[i] = apc->indir_table[i];
 	}
 
-	if (rxfh->key)
-		memcpy(rxfh->key, apc->hashkey, MANA_HASH_KEY_SIZE);
+	if (key)
+		memcpy(key, apc->hashkey, MANA_HASH_KEY_SIZE);
 
 	return 0;
 }
 
-static int mana_set_rxfh(struct net_device *ndev,
-			 struct ethtool_rxfh_param *rxfh,
-			 struct netlink_ext_ack *extack)
+static int mana_set_rxfh(struct net_device *ndev, const u32 *indir,
+			 const u8 *key, const u8 hfunc)
 {
 	struct mana_port_context *apc = netdev_priv(ndev);
 	bool update_hash = false, update_table = false;
@@ -331,17 +282,16 @@ static int mana_set_rxfh(struct net_device *ndev,
 	if (!apc->port_is_up)
 		return -EOPNOTSUPP;
 
-	if (rxfh->hfunc != ETH_RSS_HASH_NO_CHANGE &&
-	    rxfh->hfunc != ETH_RSS_HASH_TOP)
+	if (hfunc != ETH_RSS_HASH_NO_CHANGE && hfunc != ETH_RSS_HASH_TOP)
 		return -EOPNOTSUPP;
 
 	save_table = kcalloc(apc->indir_table_sz, sizeof(u32), GFP_KERNEL);
 	if (!save_table)
 		return -ENOMEM;
 
-	if (rxfh->indir) {
+	if (indir) {
 		for (i = 0; i < apc->indir_table_sz; i++)
-			if (rxfh->indir[i] >= apc->num_queues) {
+			if (indir[i] >= apc->num_queues) {
 				err = -EINVAL;
 				goto cleanup;
 			}
@@ -349,14 +299,14 @@ static int mana_set_rxfh(struct net_device *ndev,
 		update_table = true;
 		for (i = 0; i < apc->indir_table_sz; i++) {
 			save_table[i] = apc->indir_table[i];
-			apc->indir_table[i] = rxfh->indir[i];
+			apc->indir_table[i] = indir[i];
 		}
 	}
 
-	if (rxfh->key) {
+	if (key) {
 		update_hash = true;
 		memcpy(save_key, apc->hashkey, MANA_HASH_KEY_SIZE);
-		memcpy(apc->hashkey, rxfh->key, MANA_HASH_KEY_SIZE);
+		memcpy(apc->hashkey, key, MANA_HASH_KEY_SIZE);
 	}
 
 	err = mana_config_rss(apc, TRI_STATE_TRUE, update_hash, update_table);
@@ -394,117 +344,28 @@ static int mana_set_channels(struct net_device *ndev,
 	struct mana_port_context *apc = netdev_priv(ndev);
 	unsigned int new_count = channels->combined_count;
 	unsigned int old_count = apc->num_queues;
-	int err;
-
-	err = mana_pre_alloc_rxbufs(apc, ndev->mtu, new_count);
-	if (err) {
-		netdev_err(ndev, "Insufficient memory for new allocations");
-		return err;
-	}
+	int err, err2;
 
 	err = mana_detach(ndev, false);
 	if (err) {
 		netdev_err(ndev, "mana_detach failed: %d\n", err);
-		goto out;
+		return err;
 	}
 
 	apc->num_queues = new_count;
 	err = mana_attach(ndev);
-	if (err) {
-		apc->num_queues = old_count;
-		netdev_err(ndev, "mana_attach failed: %d\n", err);
-	}
+	if (!err)
+		return 0;
 
-out:
-	mana_pre_dealloc_rxbufs(apc);
+	netdev_err(ndev, "mana_attach failed: %d\n", err);
+
+	/* Try to roll it back to the old configuration. */
+	apc->num_queues = old_count;
+	err2 = mana_attach(ndev);
+	if (err2)
+		netdev_err(ndev, "mana re-attach failed: %d\n", err2);
+
 	return err;
-}
-
-static void mana_get_ringparam(struct net_device *ndev,
-			       struct ethtool_ringparam *ring,
-			       struct kernel_ethtool_ringparam *kernel_ring,
-			       struct netlink_ext_ack *extack)
-{
-	struct mana_port_context *apc = netdev_priv(ndev);
-
-	ring->rx_pending = apc->rx_queue_size;
-	ring->tx_pending = apc->tx_queue_size;
-	ring->rx_max_pending = MAX_RX_BUFFERS_PER_QUEUE;
-	ring->tx_max_pending = MAX_TX_BUFFERS_PER_QUEUE;
-}
-
-static int mana_set_ringparam(struct net_device *ndev,
-			      struct ethtool_ringparam *ring,
-			      struct kernel_ethtool_ringparam *kernel_ring,
-			      struct netlink_ext_ack *extack)
-{
-	struct mana_port_context *apc = netdev_priv(ndev);
-	u32 new_tx, new_rx;
-	u32 old_tx, old_rx;
-	int err;
-
-	old_tx = apc->tx_queue_size;
-	old_rx = apc->rx_queue_size;
-
-	if (ring->tx_pending < MIN_TX_BUFFERS_PER_QUEUE) {
-		NL_SET_ERR_MSG_FMT(extack, "tx:%d less than the min:%d", ring->tx_pending,
-				   MIN_TX_BUFFERS_PER_QUEUE);
-		return -EINVAL;
-	}
-
-	if (ring->rx_pending < MIN_RX_BUFFERS_PER_QUEUE) {
-		NL_SET_ERR_MSG_FMT(extack, "rx:%d less than the min:%d", ring->rx_pending,
-				   MIN_RX_BUFFERS_PER_QUEUE);
-		return -EINVAL;
-	}
-
-	new_rx = roundup_pow_of_two(ring->rx_pending);
-	new_tx = roundup_pow_of_two(ring->tx_pending);
-	netdev_info(ndev, "Using nearest power of 2 values for Txq:%d Rxq:%d\n",
-		    new_tx, new_rx);
-
-	/* pre-allocating new buffers to prevent failures in mana_attach() later */
-	apc->rx_queue_size = new_rx;
-	err = mana_pre_alloc_rxbufs(apc, ndev->mtu, apc->num_queues);
-	apc->rx_queue_size = old_rx;
-	if (err) {
-		netdev_err(ndev, "Insufficient memory for new allocations\n");
-		return err;
-	}
-
-	err = mana_detach(ndev, false);
-	if (err) {
-		netdev_err(ndev, "mana_detach failed: %d\n", err);
-		goto out;
-	}
-
-	apc->tx_queue_size = new_tx;
-	apc->rx_queue_size = new_rx;
-
-	err = mana_attach(ndev);
-	if (err) {
-		netdev_err(ndev, "mana_attach failed: %d\n", err);
-		apc->tx_queue_size = old_tx;
-		apc->rx_queue_size = old_rx;
-	}
-out:
-	mana_pre_dealloc_rxbufs(apc);
-	return err;
-}
-
-static int mana_get_link_ksettings(struct net_device *ndev,
-				   struct ethtool_link_ksettings *cmd)
-{
-	struct mana_port_context *apc = netdev_priv(ndev);
-	int err;
-
-	err = mana_query_link_cfg(apc);
-	cmd->base.speed = (err) ? SPEED_UNKNOWN : apc->max_speed;
-
-	cmd->base.duplex = DUPLEX_FULL;
-	cmd->base.port = PORT_OTHER;
-
-	return 0;
 }
 
 const struct ethtool_ops mana_ethtool_ops = {
@@ -518,8 +379,4 @@ const struct ethtool_ops mana_ethtool_ops = {
 	.set_rxfh		= mana_set_rxfh,
 	.get_channels		= mana_get_channels,
 	.set_channels		= mana_set_channels,
-	.get_ringparam          = mana_get_ringparam,
-	.set_ringparam          = mana_set_ringparam,
-	.get_link_ksettings	= mana_get_link_ksettings,
-	.get_link		= ethtool_op_get_link,
 };

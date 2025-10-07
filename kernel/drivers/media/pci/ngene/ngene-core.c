@@ -50,9 +50,9 @@ DVB_DEFINE_MOD_OPT_ADAPTER_NR(adapter_nr);
 /* nGene interrupt handler **************************************************/
 /****************************************************************************/
 
-static void event_bh_work(struct work_struct *t)
+static void event_tasklet(struct tasklet_struct *t)
 {
-	struct ngene *dev = from_work(dev, t, event_bh_work);
+	struct ngene *dev = from_tasklet(dev, t, event_tasklet);
 
 	while (dev->EventQueueReadIndex != dev->EventQueueWriteIndex) {
 		struct EVENT_BUFFER Event =
@@ -68,9 +68,9 @@ static void event_bh_work(struct work_struct *t)
 	}
 }
 
-static void demux_bh_work(struct work_struct *t)
+static void demux_tasklet(struct tasklet_struct *t)
 {
-	struct ngene_channel *chan = from_work(chan, t, demux_bh_work);
+	struct ngene_channel *chan = from_tasklet(chan, t, demux_tasklet);
 	struct device *pdev = &chan->dev->pci_dev->dev;
 	struct SBufferHeader *Cur = chan->nextBuffer;
 
@@ -204,7 +204,7 @@ static irqreturn_t irq_handler(int irq, void *dev_id)
 			dev->EventQueueOverflowFlag = 1;
 		}
 		dev->EventBuffer->EventStatus &= ~0x80;
-		queue_work(system_bh_wq, &dev->event_bh_work);
+		tasklet_schedule(&dev->event_tasklet);
 		rc = IRQ_HANDLED;
 	}
 
@@ -217,8 +217,8 @@ static irqreturn_t irq_handler(int irq, void *dev_id)
 			     ngeneBuffer.SR.Flags & 0xC0) == 0x80) {
 				dev->channel[i].nextBuffer->
 					ngeneBuffer.SR.Flags |= 0x40;
-				queue_work(system_bh_wq,
-					   &dev->channel[i].demux_bh_work);
+				tasklet_schedule(
+					&dev->channel[i].demux_tasklet);
 				rc = IRQ_HANDLED;
 			}
 		}
@@ -1181,7 +1181,7 @@ static void ngene_init(struct ngene *dev)
 	struct device *pdev = &dev->pci_dev->dev;
 	int i;
 
-	INIT_WORK(&dev->event_bh_work, event_bh_work);
+	tasklet_setup(&dev->event_tasklet, event_tasklet);
 
 	memset_io(dev->iomem + 0xc000, 0x00, 0x220);
 	memset_io(dev->iomem + 0xc400, 0x00, 0x100);
@@ -1236,19 +1236,14 @@ static int ngene_load_firm(struct ngene *dev)
 		break;
 	}
 
-	if (request_firmware(&fw, fw_name, &dev->pci_dev->dev) < 0) {
-		dev_err(pdev, "Could not load firmware file %s.\n", fw_name);
-		dev_info(pdev, "Copy %s to your hotplug directory!\n",
-			 fw_name);
+	if (request_firmware(&fw, fw_name, &dev->pci_dev->dev))
 		return -1;
-	}
 	if (size == 0)
 		size = fw->size;
 	if (size != fw->size) {
 		dev_err(pdev, "Firmware %s has invalid size!", fw_name);
 		err = -1;
 	} else {
-		dev_info(pdev, "Loading firmware file %s.\n", fw_name);
 		ngene_fw = (u8 *) fw->data;
 		err = ngene_command_load_firmware(dev, ngene_fw, size);
 	}
@@ -1395,7 +1390,7 @@ static void release_channel(struct ngene_channel *chan)
 	if (chan->running)
 		set_transfer(chan, 0);
 
-	cancel_work_sync(&chan->demux_bh_work);
+	tasklet_kill(&chan->demux_tasklet);
 
 	if (chan->ci_dev) {
 		dvb_unregister_device(chan->ci_dev);
@@ -1445,7 +1440,7 @@ static int init_channel(struct ngene_channel *chan)
 	struct ngene_info *ni = dev->card_info;
 	int io = ni->io_type[nr];
 
-	INIT_WORK(&chan->demux_bh_work, demux_bh_work);
+	tasklet_setup(&chan->demux_tasklet, demux_tasklet);
 	chan->users = 0;
 	chan->type = io;
 	chan->mode = chan->type;	/* for now only one mode */
@@ -1649,7 +1644,7 @@ void ngene_remove(struct pci_dev *pdev)
 	struct ngene *dev = pci_get_drvdata(pdev);
 	int i;
 
-	cancel_work_sync(&dev->event_bh_work);
+	tasklet_kill(&dev->event_tasklet);
 	for (i = MAX_STREAM - 1; i >= 0; i--)
 		release_channel(&dev->channel[i]);
 	if (dev->ci.en)

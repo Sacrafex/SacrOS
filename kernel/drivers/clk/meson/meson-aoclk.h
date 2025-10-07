@@ -17,13 +17,14 @@
 #include <linux/reset-controller.h>
 
 #include "clk-regmap.h"
-#include "meson-clkc-utils.h"
 
 struct meson_aoclk_data {
 	const unsigned int			reset_reg;
 	const int				num_reset;
 	const unsigned int			*reset;
-	struct meson_clk_hw_data		hw_clks;
+	const int				num_clks;
+	struct clk_regmap			**clks;
+	const struct clk_hw_onecell_data	*hw_data;
 };
 
 struct meson_aoclk_reset_controller {

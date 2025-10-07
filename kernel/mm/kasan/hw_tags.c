@@ -8,7 +8,6 @@
 
 #define pr_fmt(fmt) "kasan: " fmt
 
-#include <kunit/visibility.h>
 #include <linux/init.h>
 #include <linux/kasan.h>
 #include <linux/kernel.h>
@@ -16,9 +15,7 @@
 #include <linux/mm.h>
 #include <linux/static_key.h>
 #include <linux/string.h>
-#include <linux/string_choices.h>
 #include <linux/types.h>
-#include <linux/vmalloc.h>
 
 #include "kasan.h"
 
@@ -60,30 +57,7 @@ enum kasan_mode kasan_mode __ro_after_init;
 EXPORT_SYMBOL_GPL(kasan_mode);
 
 /* Whether to enable vmalloc tagging. */
-#ifdef CONFIG_KASAN_VMALLOC
 DEFINE_STATIC_KEY_TRUE(kasan_flag_vmalloc);
-#else
-DEFINE_STATIC_KEY_FALSE(kasan_flag_vmalloc);
-#endif
-EXPORT_SYMBOL_GPL(kasan_flag_vmalloc);
-
-#define PAGE_ALLOC_SAMPLE_DEFAULT	1
-#define PAGE_ALLOC_SAMPLE_ORDER_DEFAULT	3
-
-/*
- * Sampling interval of page_alloc allocation (un)poisoning.
- * Defaults to no sampling.
- */
-unsigned long kasan_page_alloc_sample = PAGE_ALLOC_SAMPLE_DEFAULT;
-
-/*
- * Minimum order of page_alloc allocations to be affected by sampling.
- * The default value is chosen to match both
- * PAGE_ALLOC_COSTLY_ORDER and SKB_FRAG_PAGE_ORDER.
- */
-unsigned int kasan_page_alloc_sample_order = PAGE_ALLOC_SAMPLE_ORDER_DEFAULT;
-
-DEFINE_PER_CPU(long, kasan_page_alloc_skip);
 
 /* kasan=off/on */
 static int __init early_kasan_flag(char *arg)
@@ -127,9 +101,6 @@ static int __init early_kasan_flag_vmalloc(char *arg)
 	if (!arg)
 		return -EINVAL;
 
-	if (!IS_ENABLED(CONFIG_KASAN_VMALLOC))
-		return 0;
-
 	if (!strcmp(arg, "off"))
 		kasan_arg_vmalloc = KASAN_ARG_VMALLOC_OFF;
 	else if (!strcmp(arg, "on"))
@@ -150,48 +121,6 @@ static inline const char *kasan_mode_info(void)
 	else
 		return "sync";
 }
-
-/* kasan.page_alloc.sample=<sampling interval> */
-static int __init early_kasan_flag_page_alloc_sample(char *arg)
-{
-	int rv;
-
-	if (!arg)
-		return -EINVAL;
-
-	rv = kstrtoul(arg, 0, &kasan_page_alloc_sample);
-	if (rv)
-		return rv;
-
-	if (!kasan_page_alloc_sample || kasan_page_alloc_sample > LONG_MAX) {
-		kasan_page_alloc_sample = PAGE_ALLOC_SAMPLE_DEFAULT;
-		return -EINVAL;
-	}
-
-	return 0;
-}
-early_param("kasan.page_alloc.sample", early_kasan_flag_page_alloc_sample);
-
-/* kasan.page_alloc.sample.order=<minimum page order> */
-static int __init early_kasan_flag_page_alloc_sample_order(char *arg)
-{
-	int rv;
-
-	if (!arg)
-		return -EINVAL;
-
-	rv = kstrtouint(arg, 0, &kasan_page_alloc_sample_order);
-	if (rv)
-		return rv;
-
-	if (kasan_page_alloc_sample_order > INT_MAX) {
-		kasan_page_alloc_sample_order = PAGE_ALLOC_SAMPLE_ORDER_DEFAULT;
-		return -EINVAL;
-	}
-
-	return 0;
-}
-early_param("kasan.page_alloc.sample.order", early_kasan_flag_page_alloc_sample_order);
 
 /*
  * kasan_init_hw_tags_cpu() is called for each CPU.
@@ -216,7 +145,7 @@ void kasan_init_hw_tags_cpu(void)
 	 * Enable async or asymm modes only when explicitly requested
 	 * through the command line.
 	 */
-	kasan_enable_hw_tags();
+	kasan_enable_tagging();
 }
 
 /* kasan_init_hw_tags() is called once on boot CPU. */
@@ -264,8 +193,8 @@ void __init kasan_init_hw_tags(void)
 
 	pr_info("KernelAddressSanitizer initialized (hw-tags, mode=%s, vmalloc=%s, stacktrace=%s)\n",
 		kasan_mode_info(),
-		str_on_off(kasan_vmalloc_enabled()),
-		str_on_off(kasan_stack_collection_enabled()));
+		kasan_vmalloc_enabled() ? "on" : "off",
+		kasan_stack_collection_enabled() ? "on" : "off");
 }
 
 #ifdef CONFIG_KASAN_VMALLOC
@@ -329,7 +258,7 @@ void *__kasan_unpoison_vmalloc(const void *start, unsigned long size,
 	 * Thus, for VM_ALLOC mappings, hardware tag-based KASAN only tags
 	 * the first virtual mapping, which is created by vmalloc().
 	 * Tagging the page_alloc memory backing that vmalloc() allocation is
-	 * skipped, see ___GFP_SKIP_KASAN.
+	 * skipped, see ___GFP_SKIP_KASAN_UNPOISON.
 	 *
 	 * For non-VM_ALLOC allocations, page_alloc memory is tagged as usual.
 	 */
@@ -384,24 +313,24 @@ void __kasan_poison_vmalloc(const void *start, unsigned long size)
 
 #endif
 
-void kasan_enable_hw_tags(void)
+void kasan_enable_tagging(void)
 {
 	if (kasan_arg_mode == KASAN_ARG_MODE_ASYNC)
-		hw_enable_tag_checks_async();
+		hw_enable_tagging_async();
 	else if (kasan_arg_mode == KASAN_ARG_MODE_ASYMM)
-		hw_enable_tag_checks_asymm();
+		hw_enable_tagging_asymm();
 	else
-		hw_enable_tag_checks_sync();
+		hw_enable_tagging_sync();
 }
 
 #if IS_ENABLED(CONFIG_KASAN_KUNIT_TEST)
 
-EXPORT_SYMBOL_IF_KUNIT(kasan_enable_hw_tags);
+EXPORT_SYMBOL_GPL(kasan_enable_tagging);
 
-VISIBLE_IF_KUNIT void kasan_force_async_fault(void)
+void kasan_force_async_fault(void)
 {
 	hw_force_async_tag_fault();
 }
-EXPORT_SYMBOL_IF_KUNIT(kasan_force_async_fault);
+EXPORT_SYMBOL_GPL(kasan_force_async_fault);
 
 #endif

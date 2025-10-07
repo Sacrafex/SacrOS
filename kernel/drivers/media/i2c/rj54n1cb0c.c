@@ -1008,8 +1008,10 @@ static int rj54n1_set_fmt(struct v4l2_subdev *sd,
 	v4l_bound_align_image(&mf->width, 112, RJ54N1_MAX_WIDTH, align,
 			      &mf->height, 84, RJ54N1_MAX_HEIGHT, align, 0);
 
-	if (format->which == V4L2_SUBDEV_FORMAT_TRY)
+	if (format->which == V4L2_SUBDEV_FORMAT_TRY) {
+		sd_state->pads->try_fmt = *mf;
 		return 0;
+	}
 
 	/*
 	 * Verify if the sensor has just been powered on. TODO: replace this
@@ -1295,7 +1297,8 @@ done:
 	return ret;
 }
 
-static int rj54n1_probe(struct i2c_client *client)
+static int rj54n1_probe(struct i2c_client *client,
+			const struct i2c_device_id *did)
 {
 	struct rj54n1 *rj54n1;
 	struct i2c_adapter *adapter = client->adapter;
@@ -1410,7 +1413,7 @@ static void rj54n1_remove(struct i2c_client *client)
 }
 
 static const struct i2c_device_id rj54n1_id[] = {
-	{ "rj54n1cb0c" },
+	{ "rj54n1cb0c", 0 },
 	{ }
 };
 MODULE_DEVICE_TABLE(i2c, rj54n1_id);

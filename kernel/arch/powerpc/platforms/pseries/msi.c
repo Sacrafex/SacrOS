@@ -9,7 +9,6 @@
 #include <linux/irq.h>
 #include <linux/irqdomain.h>
 #include <linux/msi.h>
-#include <linux/seq_file.h>
 
 #include <asm/rtas.h>
 #include <asm/hw_irq.h>
@@ -27,7 +26,6 @@ static int query_token, change_token;
 #define RTAS_CHANGE_MSI_FN	3
 #define RTAS_CHANGE_MSIX_FN	4
 #define RTAS_CHANGE_32MSI_FN	5
-#define RTAS_CHANGE_32MSIX_FN	6
 
 /* RTAS Helpers */
 
@@ -43,7 +41,7 @@ static int rtas_change_msi(struct pci_dn *pdn, u32 func, u32 num_irqs)
 	seq_num = 1;
 	do {
 		if (func == RTAS_CHANGE_MSI_FN || func == RTAS_CHANGE_MSIX_FN ||
-		    func == RTAS_CHANGE_32MSI_FN || func == RTAS_CHANGE_32MSIX_FN)
+		    func == RTAS_CHANGE_32MSI_FN)
 			rc = rtas_call(change_token, 6, 4, rtas_ret, addr,
 					BUID_HI(buid), BUID_LO(buid),
 					func, num_irqs, seq_num);
@@ -408,12 +406,8 @@ again:
 
 		if (use_32bit_msi_hack && rc > 0)
 			rtas_hack_32bit_msi_gen2(pdev);
-	} else {
-		if (pdev->no_64bit_msi)
-			rc = rtas_change_msi(pdn, RTAS_CHANGE_32MSIX_FN, nvec);
-		else
-			rc = rtas_change_msi(pdn, RTAS_CHANGE_MSIX_FN, nvec);
-	}
+	} else
+		rc = rtas_change_msi(pdn, RTAS_CHANGE_MSIX_FN, nvec);
 
 	if (rc != nvec) {
 		if (nvec != nvec_in) {
@@ -453,10 +447,13 @@ static void pseries_msi_ops_msi_free(struct irq_domain *domain,
  * RTAS can not disable one MSI at a time. It's all or nothing. Do it
  * at the end after all IRQs have been freed.
  */
-static void pseries_msi_post_free(struct irq_domain *domain, struct device *dev)
+static void pseries_msi_domain_free_irqs(struct irq_domain *domain,
+					 struct device *dev)
 {
 	if (WARN_ON_ONCE(!dev_is_pci(dev)))
 		return;
+
+	__msi_domain_free_irqs(domain, dev);
 
 	rtas_disable_msi(to_pci_dev(dev));
 }
@@ -464,7 +461,7 @@ static void pseries_msi_post_free(struct irq_domain *domain, struct device *dev)
 static struct msi_domain_ops pseries_pci_msi_domain_ops = {
 	.msi_prepare	= pseries_msi_ops_prepare,
 	.msi_free	= pseries_msi_ops_msi_free,
-	.msi_post_free	= pseries_msi_post_free,
+	.domain_free_irqs = pseries_msi_domain_free_irqs,
 };
 
 static void pseries_msi_shutdown(struct irq_data *d)
@@ -616,7 +613,7 @@ static const struct irq_domain_ops pseries_irq_domain_ops = {
 static int __pseries_msi_allocate_domains(struct pci_controller *phb,
 					  unsigned int count)
 {
-	struct irq_domain *parent = irq_get_default_domain();
+	struct irq_domain *parent = irq_get_default_host();
 
 	phb->fwnode = irq_domain_alloc_named_id_fwnode("pSeries-MSI",
 						       phb->global_number);
@@ -633,7 +630,7 @@ static int __pseries_msi_allocate_domains(struct pci_controller *phb,
 		return -ENOMEM;
 	}
 
-	phb->msi_domain = pci_msi_create_irq_domain(of_fwnode_handle(phb->dn),
+	phb->msi_domain = pci_msi_create_irq_domain(of_node_to_fwnode(phb->dn),
 						    &pseries_msi_domain_info,
 						    phb->dev_domain);
 	if (!phb->msi_domain) {
@@ -690,8 +687,8 @@ static void rtas_msi_pci_irq_fixup(struct pci_dev *pdev)
 
 static int rtas_msi_init(void)
 {
-	query_token  = rtas_function_token(RTAS_FN_IBM_QUERY_INTERRUPT_SOURCE_NUMBER);
-	change_token = rtas_function_token(RTAS_FN_IBM_CHANGE_MSI);
+	query_token  = rtas_token("ibm,query-interrupt-source-number");
+	change_token = rtas_token("ibm,change-msi");
 
 	if ((query_token == RTAS_UNKNOWN_SERVICE) ||
 			(change_token == RTAS_UNKNOWN_SERVICE)) {

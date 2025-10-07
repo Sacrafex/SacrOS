@@ -5,9 +5,8 @@
 
 #include <crypto/aes.h>
 #include <linux/crypto.h>
-#include <linux/export.h>
 #include <linux/module.h>
-#include <linux/unaligned.h>
+#include <asm/unaligned.h>
 
 /*
  * Emit the sbox as volatile const to prevent the compiler from doing

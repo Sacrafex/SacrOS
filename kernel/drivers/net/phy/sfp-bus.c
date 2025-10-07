@@ -17,7 +17,7 @@ struct sfp_bus {
 	/* private: */
 	struct kref kref;
 	struct list_head node;
-	const struct fwnode_handle *fwnode;
+	struct fwnode_handle *fwnode;
 
 	const struct sfp_socket_ops *socket_ops;
 	struct device *sfp_dev;
@@ -324,7 +324,7 @@ void sfp_parse_support(struct sfp_bus *bus, const struct sfp_eeprom_id *id,
 	 * modules use 2500Mbaud rather than 3100 or 3200Mbaud for
 	 * 2500BASE-X, so we allow some slack here.
 	 */
-	if (linkmode_empty(modes) && br_nom) {
+	if (bitmap_empty(modes, __ETHTOOL_LINK_MODE_MASK_NBITS) && br_nom) {
 		if (br_min <= 1300 && br_max >= 1200) {
 			phylink_set(modes, 1000baseX_Full);
 			__set_bit(PHY_INTERFACE_MODE_1000BASEX, interfaces);
@@ -335,14 +335,14 @@ void sfp_parse_support(struct sfp_bus *bus, const struct sfp_eeprom_id *id,
 		}
 	}
 
-	phylink_set(modes, Autoneg);
-	phylink_set(modes, Pause);
-	phylink_set(modes, Asym_Pause);
-
 	if (bus->sfp_quirk && bus->sfp_quirk->modes)
 		bus->sfp_quirk->modes(id, modes, interfaces);
 
 	linkmode_or(support, support, modes);
+
+	phylink_set(support, Autoneg);
+	phylink_set(support, Pause);
+	phylink_set(support, Asym_Pause);
 }
 EXPORT_SYMBOL_GPL(sfp_parse_support);
 
@@ -355,7 +355,7 @@ EXPORT_SYMBOL_GPL(sfp_parse_support);
  * modes mask.
  */
 phy_interface_t sfp_select_interface(struct sfp_bus *bus,
-				     const unsigned long *link_modes)
+				     unsigned long *link_modes)
 {
 	if (phylink_test(link_modes, 25000baseCR_Full) ||
 	    phylink_test(link_modes, 25000baseKR_Full) ||
@@ -373,8 +373,7 @@ phy_interface_t sfp_select_interface(struct sfp_bus *bus,
 	if (phylink_test(link_modes, 5000baseT_Full))
 		return PHY_INTERFACE_MODE_5GBASER;
 
-	if (phylink_test(link_modes, 2500baseX_Full) ||
-	    phylink_test(link_modes, 2500baseT_Full))
+	if (phylink_test(link_modes, 2500baseX_Full))
 		return PHY_INTERFACE_MODE_2500BASEX;
 
 	if (phylink_test(link_modes, 1000baseT_Half) ||
@@ -401,7 +400,7 @@ static const struct sfp_upstream_ops *sfp_get_upstream_ops(struct sfp_bus *bus)
 	return bus->registered ? bus->upstream_ops : NULL;
 }
 
-static struct sfp_bus *sfp_bus_get(const struct fwnode_handle *fwnode)
+static struct sfp_bus *sfp_bus_get(struct fwnode_handle *fwnode)
 {
 	struct sfp_bus *sfp, *new, *found = NULL;
 
@@ -487,7 +486,7 @@ static void sfp_unregister_bus(struct sfp_bus *bus)
 			bus->socket_ops->stop(bus->sfp);
 		bus->socket_ops->detach(bus->sfp);
 		if (bus->phydev && ops && ops->disconnect_phy)
-			ops->disconnect_phy(bus->upstream, bus->phydev);
+			ops->disconnect_phy(bus->upstream);
 	}
 	bus->registered = false;
 }
@@ -587,26 +586,6 @@ static void sfp_upstream_clear(struct sfp_bus *bus)
 }
 
 /**
- * sfp_upstream_set_signal_rate() - set data signalling rate
- * @bus: a pointer to the &struct sfp_bus structure for the sfp module
- * @rate_kbd: signalling rate in units of 1000 baud
- *
- * Configure the rate select settings on the SFP module for the signalling
- * rate (not the same as the data rate).
- *
- * Locks that may be held:
- *  Phylink's state_mutex
- *  rtnl lock
- *  SFP's sm_mutex
- */
-void sfp_upstream_set_signal_rate(struct sfp_bus *bus, unsigned int rate_kbd)
-{
-	if (bus->registered)
-		bus->socket_ops->set_signal_rate(bus->sfp, rate_kbd);
-}
-EXPORT_SYMBOL_GPL(sfp_upstream_set_signal_rate);
-
-/**
  * sfp_bus_find_fwnode() - parse and locate the SFP bus from fwnode
  * @fwnode: firmware node for the parent device (MAC or PHY)
  *
@@ -624,7 +603,7 @@ EXPORT_SYMBOL_GPL(sfp_upstream_set_signal_rate);
  *	- %-ENOMEM if we failed to allocate the bus.
  *	- an error from the upstream's connect_phy() method.
  */
-struct sfp_bus *sfp_bus_find_fwnode(const struct fwnode_handle *fwnode)
+struct sfp_bus *sfp_bus_find_fwnode(struct fwnode_handle *fwnode)
 {
 	struct fwnode_reference_args ref;
 	struct sfp_bus *bus;
@@ -722,28 +701,6 @@ void sfp_bus_del_upstream(struct sfp_bus *bus)
 }
 EXPORT_SYMBOL_GPL(sfp_bus_del_upstream);
 
-/**
- * sfp_get_name() - Get the SFP device name
- * @bus: a pointer to the &struct sfp_bus structure for the sfp module
- *
- * Gets the SFP device's name, if @bus has a registered socket. Callers must
- * hold RTNL, and the returned name is only valid until RTNL is released.
- *
- * Returns:
- *	- The name of the SFP device registered with sfp_register_socket()
- *	- %NULL if no device was registered on @bus
- */
-const char *sfp_get_name(struct sfp_bus *bus)
-{
-	ASSERT_RTNL();
-
-	if (bus->sfp_dev)
-		return dev_name(bus->sfp_dev);
-
-	return NULL;
-}
-EXPORT_SYMBOL_GPL(sfp_get_name);
-
 /* Socket driver entry points */
 int sfp_add_phy(struct sfp_bus *bus, struct phy_device *phydev)
 {
@@ -765,7 +722,7 @@ void sfp_remove_phy(struct sfp_bus *bus)
 	const struct sfp_upstream_ops *ops = sfp_get_upstream_ops(bus);
 
 	if (ops && ops->disconnect_phy)
-		ops->disconnect_phy(bus->upstream, bus->phydev);
+		ops->disconnect_phy(bus->upstream);
 	bus->phydev = NULL;
 }
 EXPORT_SYMBOL_GPL(sfp_remove_phy);

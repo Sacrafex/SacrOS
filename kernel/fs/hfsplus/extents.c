@@ -446,9 +446,9 @@ int hfsplus_file_extend(struct inode *inode, bool zeroout)
 	if (sbi->alloc_file->i_size * 8 <
 	    sbi->total_blocks - sbi->free_blocks + 8) {
 		/* extend alloc file */
-		pr_err_ratelimited("extend alloc file! (%llu,%u,%u)\n",
-				   sbi->alloc_file->i_size * 8,
-				   sbi->total_blocks, sbi->free_blocks);
+		pr_err("extend alloc file! (%llu,%u,%u)\n",
+		       sbi->alloc_file->i_size * 8,
+		       sbi->total_blocks, sbi->free_blocks);
 		return -ENOSPC;
 	}
 
@@ -551,16 +551,16 @@ void hfsplus_file_truncate(struct inode *inode)
 
 	if (inode->i_size > hip->phys_size) {
 		struct address_space *mapping = inode->i_mapping;
-		struct folio *folio;
-		void *fsdata = NULL;
+		struct page *page;
+		void *fsdata;
 		loff_t size = inode->i_size;
 
 		res = hfsplus_write_begin(NULL, mapping, size, 0,
-					  &folio, &fsdata);
+					  &page, &fsdata);
 		if (res)
 			return;
 		res = generic_write_end(NULL, mapping, size, 0, 0,
-					folio, fsdata);
+					page, fsdata);
 		if (res < 0)
 			return;
 		mark_inode_dirty(inode);

@@ -18,6 +18,7 @@
 #include <linux/list.h>
 #include <linux/module.h>
 #include <linux/of.h>
+#include <linux/of_device.h>
 #include <linux/of_dma.h>
 #include <linux/platform_device.h>
 #include <linux/pm_runtime.h>
@@ -516,7 +517,7 @@ mtk_cqdma_prep_dma_memcpy(struct dma_chan *c, dma_addr_t dest,
 		/* setup dma channel */
 		cvd[i]->ch = c;
 
-		/* setup source, destination, and length */
+		/* setup sourece, destination, and length */
 		tlen = (len > MTK_CQDMA_MAX_LEN) ? MTK_CQDMA_MAX_LEN : len;
 		cvd[i]->len = tlen;
 		cvd[i]->src = src;
@@ -615,7 +616,7 @@ static int mtk_cqdma_alloc_chan_resources(struct dma_chan *c)
 	u32 i, min_refcnt = U32_MAX, refcnt;
 	unsigned long flags;
 
-	/* allocate PC with the minimum refcount */
+	/* allocate PC with the minimun refcount */
 	for (i = 0; i < cqdma->dma_channels; ++i) {
 		refcnt = refcount_read(&cqdma->pc[i]->refcnt);
 		if (refcnt < min_refcnt) {
@@ -883,7 +884,7 @@ err_unregister:
 	return err;
 }
 
-static void mtk_cqdma_remove(struct platform_device *pdev)
+static int mtk_cqdma_remove(struct platform_device *pdev)
 {
 	struct mtk_cqdma_device *cqdma = platform_get_drvdata(pdev);
 	struct mtk_cqdma_vchan *vc;
@@ -916,6 +917,8 @@ static void mtk_cqdma_remove(struct platform_device *pdev)
 
 	dma_async_device_unregister(&cqdma->ddev);
 	of_dma_controller_free(pdev->dev.of_node);
+
+	return 0;
 }
 
 static struct platform_driver mtk_cqdma_driver = {

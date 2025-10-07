@@ -25,7 +25,7 @@
 #include <linux/ioctl.h>
 #include <linux/skbuff.h>
 #include <linux/bitrev.h>
-#include <linux/unaligned.h>
+#include <asm/unaligned.h>
 
 #include <net/bluetooth/bluetooth.h>
 #include <net/bluetooth/hci_core.h>
@@ -382,7 +382,7 @@ static void bcsp_pkt_cull(struct bcsp_struct *bcsp)
 	}
 
 	if (skb_queue_empty(&bcsp->unack))
-		timer_delete(&bcsp->tbcsp);
+		del_timer(&bcsp->tbcsp);
 
 	spin_unlock_irqrestore(&bcsp->unack.lock, flags);
 
@@ -688,7 +688,7 @@ static int bcsp_recv(struct hci_uart *hu, const void *data, int count)
 	/* Arrange to retransmit all messages in the relq. */
 static void bcsp_timed_event(struct timer_list *t)
 {
-	struct bcsp_struct *bcsp = timer_container_of(bcsp, t, tbcsp);
+	struct bcsp_struct *bcsp = from_timer(bcsp, t, tbcsp);
 	struct hci_uart *hu = bcsp->hu;
 	struct sk_buff *skb;
 	unsigned long flags;
@@ -737,7 +737,7 @@ static int bcsp_close(struct hci_uart *hu)
 {
 	struct bcsp_struct *bcsp = hu->priv;
 
-	timer_shutdown_sync(&bcsp->tbcsp);
+	del_timer_sync(&bcsp->tbcsp);
 
 	hu->priv = NULL;
 

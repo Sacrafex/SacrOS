@@ -496,6 +496,7 @@ static int snd_atiixp_aclink_reset(struct atiixp_modem *chip)
 	return 0;
 }
 
+#ifdef CONFIG_PM_SLEEP
 static int snd_atiixp_aclink_down(struct atiixp_modem *chip)
 {
 	// if (atiixp_read(chip, MODEM_MIRROR) & 0x1) /* modem running, too? */
@@ -505,6 +506,7 @@ static int snd_atiixp_aclink_down(struct atiixp_modem *chip)
 		     ATI_REG_CMD_POWERDOWN);
 	return 0;
 }
+#endif
 
 /*
  * auto-detection of codecs
@@ -982,7 +984,7 @@ static int snd_atiixp_pcm_new(struct atiixp_modem *chip)
 	snd_pcm_set_ops(pcm, SNDRV_PCM_STREAM_CAPTURE, &snd_atiixp_capture_ops);
 	pcm->dev_class = SNDRV_PCM_CLASS_MODEM;
 	pcm->private_data = chip;
-	strscpy(pcm->name, "ATI IXP MC97");
+	strcpy(pcm->name, "ATI IXP MC97");
 	chip->pcmdevs[ATI_PCMDEV_ANALOG] = pcm;
 
 	snd_pcm_set_managed_buffer_all(pcm, SNDRV_DMA_TYPE_DEV,
@@ -1092,6 +1094,7 @@ static int snd_atiixp_mixer_new(struct atiixp_modem *chip, int clock)
 }
 
 
+#ifdef CONFIG_PM_SLEEP
 /*
  * power management
  */
@@ -1125,7 +1128,11 @@ static int snd_atiixp_resume(struct device *dev)
 	return 0;
 }
 
-static DEFINE_SIMPLE_DEV_PM_OPS(snd_atiixp_pm, snd_atiixp_suspend, snd_atiixp_resume);
+static SIMPLE_DEV_PM_OPS(snd_atiixp_pm, snd_atiixp_suspend, snd_atiixp_resume);
+#define SND_ATIIXP_PM_OPS	&snd_atiixp_pm
+#else
+#define SND_ATIIXP_PM_OPS	NULL
+#endif /* CONFIG_PM_SLEEP */
 
 /*
  * proc interface for register dump
@@ -1174,10 +1181,11 @@ static int snd_atiixp_init(struct snd_card *card, struct pci_dev *pci)
 	chip->card = card;
 	chip->pci = pci;
 	chip->irq = -1;
-	chip->remap_addr = pcim_iomap_region(pci, 0, "ATI IXP MC97");
-	if (IS_ERR(chip->remap_addr))
-		return PTR_ERR(chip->remap_addr);
+	err = pcim_iomap_regions(pci, 1 << 0, "ATI IXP MC97");
+	if (err < 0)
+		return err;
 	chip->addr = pci_resource_start(pci, 0);
+	chip->remap_addr = pcim_iomap_table(pci)[0];
 
 	if (devm_request_irq(&pci->dev, pci->irq, snd_atiixp_interrupt,
 			     IRQF_SHARED, KBUILD_MODNAME, chip)) {
@@ -1206,8 +1214,8 @@ static int __snd_atiixp_probe(struct pci_dev *pci,
 		return err;
 	chip = card->private_data;
 
-	strscpy(card->driver, "ATIIXP-MODEM");
-	strscpy(card->shortname, "ATI IXP Modem");
+	strcpy(card->driver, "ATIIXP-MODEM");
+	strcpy(card->shortname, "ATI IXP Modem");
 	err = snd_atiixp_init(card, pci);
 	if (err < 0)
 		return err;
@@ -1250,7 +1258,7 @@ static struct pci_driver atiixp_modem_driver = {
 	.id_table = snd_atiixp_ids,
 	.probe = snd_atiixp_probe,
 	.driver = {
-		.pm = &snd_atiixp_pm,
+		.pm = SND_ATIIXP_PM_OPS,
 	},
 };
 

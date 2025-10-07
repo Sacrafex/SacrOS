@@ -769,7 +769,9 @@ struct snd_m3 {
 
 	unsigned int in_suspend;
 
+#ifdef CONFIG_PM_SLEEP
 	u16 *suspend_mem;
+#endif
 
 	const struct firmware *assp_kernel_image;
 	const struct firmware *assp_minisrc_image;
@@ -1846,7 +1848,7 @@ snd_m3_pcm(struct snd_m3 * chip, int device)
 
 	pcm->private_data = chip;
 	pcm->info_flags = 0;
-	strscpy(pcm->name, chip->card->driver);
+	strcpy(pcm->name, chip->card->driver);
 	chip->pcm = pcm;
 	
 	snd_pcm_set_managed_buffer_all(pcm, SNDRV_DMA_TYPE_DEV,
@@ -2027,6 +2029,9 @@ static int snd_m3_mixer(struct snd_m3 *chip)
 {
 	struct snd_ac97_bus *pbus;
 	struct snd_ac97_template ac97;
+#ifndef CONFIG_SND_MAESTRO3_INPUT
+	struct snd_ctl_elem_id elem_id;
+#endif
 	int err;
 	static const struct snd_ac97_bus_ops ops = {
 		.write = snd_m3_ac97_write,
@@ -2049,10 +2054,14 @@ static int snd_m3_mixer(struct snd_m3 *chip)
 	snd_ac97_write(chip->ac97, AC97_PCM, 0);
 
 #ifndef CONFIG_SND_MAESTRO3_INPUT
-	chip->master_switch = snd_ctl_find_id_mixer(chip->card,
-						    "Master Playback Switch");
-	chip->master_volume = snd_ctl_find_id_mixer(chip->card,
-						    "Master Playback Volume");
+	memset(&elem_id, 0, sizeof(elem_id));
+	elem_id.iface = SNDRV_CTL_ELEM_IFACE_MIXER;
+	strcpy(elem_id.name, "Master Playback Switch");
+	chip->master_switch = snd_ctl_find_id(chip->card, &elem_id);
+	memset(&elem_id, 0, sizeof(elem_id));
+	elem_id.iface = SNDRV_CTL_ELEM_IFACE_MIXER;
+	strcpy(elem_id.name, "Master Playback Volume");
+	chip->master_volume = snd_ctl_find_id(chip->card, &elem_id);
 #endif
 
 	return 0;
@@ -2352,7 +2361,9 @@ static void snd_m3_free(struct snd_card *card)
 		outw(0, chip->iobase + HOST_INT_CTRL); /* disable ints */
 	}
 
+#ifdef CONFIG_PM_SLEEP
 	vfree(chip->suspend_mem);
+#endif
 	release_firmware(chip->assp_kernel_image);
 	release_firmware(chip->assp_minisrc_image);
 }
@@ -2361,6 +2372,7 @@ static void snd_m3_free(struct snd_card *card)
 /*
  * APM support
  */
+#ifdef CONFIG_PM_SLEEP
 static int m3_suspend(struct device *dev)
 {
 	struct snd_card *card = dev_get_drvdata(dev);
@@ -2434,7 +2446,11 @@ static int m3_resume(struct device *dev)
 	return 0;
 }
 
-static DEFINE_SIMPLE_DEV_PM_OPS(m3_pm, m3_suspend, m3_resume);
+static SIMPLE_DEV_PM_OPS(m3_pm, m3_suspend, m3_resume);
+#define M3_PM_OPS	&m3_pm
+#else
+#define M3_PM_OPS	NULL
+#endif /* CONFIG_PM_SLEEP */
 
 #ifdef CONFIG_SND_MAESTRO3_INPUT
 static int snd_m3_input_register(struct snd_m3 *chip)
@@ -2552,7 +2568,7 @@ snd_m3_create(struct snd_card *card, struct pci_dev *pci,
 	if (err < 0)
 		return err;
 
-	err = pcim_request_all_regions(pci, card->driver);
+	err = pci_request_regions(pci, card->driver);
 	if (err < 0)
 		return err;
 
@@ -2578,14 +2594,14 @@ snd_m3_create(struct snd_card *card, struct pci_dev *pci,
 	chip->irq = pci->irq;
 	card->sync_irq = chip->irq;
 
-	if (IS_ENABLED(CONFIG_PM_SLEEP)) {
-		chip->suspend_mem =
-			vmalloc(array_size(sizeof(u16),
-					   REV_B_CODE_MEMORY_LENGTH +
-					   REV_B_DATA_MEMORY_LENGTH));
-		if (!chip->suspend_mem)
-			dev_warn(card->dev, "can't allocate apm buffer\n");
-	}
+#ifdef CONFIG_PM_SLEEP
+	chip->suspend_mem =
+		vmalloc(array_size(sizeof(u16),
+				   REV_B_CODE_MEMORY_LENGTH +
+					REV_B_DATA_MEMORY_LENGTH));
+	if (chip->suspend_mem == NULL)
+		dev_warn(card->dev, "can't allocate apm buffer\n");
+#endif
 
 	err = snd_m3_mixer(chip);
 	if (err < 0)
@@ -2648,14 +2664,14 @@ __snd_m3_probe(struct pci_dev *pci, const struct pci_device_id *pci_id)
 	switch (pci->device) {
 	case PCI_DEVICE_ID_ESS_ALLEGRO:
 	case PCI_DEVICE_ID_ESS_ALLEGRO_1:
-		strscpy(card->driver, "Allegro");
+		strcpy(card->driver, "Allegro");
 		break;
 	case PCI_DEVICE_ID_ESS_CANYON3D_2LE:
 	case PCI_DEVICE_ID_ESS_CANYON3D_2:
-		strscpy(card->driver, "Canyon3D-2");
+		strcpy(card->driver, "Canyon3D-2");
 		break;
 	default:
-		strscpy(card->driver, "Maestro3");
+		strcpy(card->driver, "Maestro3");
 		break;
 	}
 
@@ -2697,7 +2713,7 @@ static struct pci_driver m3_driver = {
 	.id_table = snd_m3_ids,
 	.probe = snd_m3_probe,
 	.driver = {
-		.pm = &m3_pm,
+		.pm = M3_PM_OPS,
 	},
 };
 	

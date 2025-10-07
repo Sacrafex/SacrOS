@@ -531,6 +531,8 @@ static const struct vb2_ops bdisp_qops = {
 	.queue_setup     = bdisp_queue_setup,
 	.buf_prepare     = bdisp_buf_prepare,
 	.buf_queue       = bdisp_buf_queue,
+	.wait_prepare    = vb2_ops_wait_prepare,
+	.wait_finish     = vb2_ops_wait_finish,
 	.stop_streaming  = bdisp_stop_streaming,
 	.start_streaming = bdisp_start_streaming,
 };
@@ -953,8 +955,8 @@ static int bdisp_s_selection(struct file *file, void *fh,
 	if ((out.left < 0) || (out.left >= frame->width) ||
 	    (out.top < 0) || (out.top >= frame->height)) {
 		dev_err(ctx->bdisp_dev->dev,
-			"Invalid crop: (%d,%d)/%ux%u vs frame: %dx%d\n",
-			out.left, out.top, out.width, out.height,
+			"Invalid crop: %dx%d@(%d,%d) vs frame: %dx%d\n",
+			out.width, out.height, out.left, out.top,
 			frame->width, frame->height);
 		return -EINVAL;
 	}
@@ -966,8 +968,8 @@ static int bdisp_s_selection(struct file *file, void *fh,
 	if (((out.left + out.width) > frame->width) ||
 	    ((out.top + out.height) > frame->height)) {
 		dev_err(ctx->bdisp_dev->dev,
-			"Invalid crop: (%d,%d)/%ux%u vs frame: %dx%d\n",
-			out.left, out.top, out.width, out.height,
+			"Invalid crop: %dx%d@(%d,%d) vs frame: %dx%d\n",
+			out.width, out.height, out.left, out.top,
 			frame->width, frame->height);
 		return -EINVAL;
 	}
@@ -982,9 +984,9 @@ static int bdisp_s_selection(struct file *file, void *fh,
 	if ((out.left != in->left) || (out.top != in->top) ||
 	    (out.width != in->width) || (out.height != in->height)) {
 		dev_dbg(ctx->bdisp_dev->dev,
-			"%s crop updated: (%d,%d)/%ux%u -> (%d,%d)/%ux%u\n",
-			__func__, in->left, in->top, in->width, in->height,
-			out.left, out.top, out.width, out.height);
+			"%s crop updated: %dx%d@(%d,%d) -> %dx%d@(%d,%d)\n",
+			__func__, in->width, in->height, in->left, in->top,
+			out.width, out.height, out.left, out.top);
 		*in = out;
 	}
 
@@ -1158,7 +1160,7 @@ static void bdisp_irq_timeout(struct work_struct *ptr)
 static int bdisp_m2m_suspend(struct bdisp_dev *bdisp)
 {
 	unsigned long flags;
-	long time_left;
+	int timeout;
 
 	spin_lock_irqsave(&bdisp->slock, flags);
 	if (!test_bit(ST_M2M_RUNNING, &bdisp->state)) {
@@ -1169,13 +1171,13 @@ static int bdisp_m2m_suspend(struct bdisp_dev *bdisp)
 	set_bit(ST_M2M_SUSPENDING, &bdisp->state);
 	spin_unlock_irqrestore(&bdisp->slock, flags);
 
-	time_left = wait_event_timeout(bdisp->irq_queue,
-				       test_bit(ST_M2M_SUSPENDED, &bdisp->state),
-				       BDISP_WORK_TIMEOUT);
+	timeout = wait_event_timeout(bdisp->irq_queue,
+				     test_bit(ST_M2M_SUSPENDED, &bdisp->state),
+				     BDISP_WORK_TIMEOUT);
 
 	clear_bit(ST_M2M_SUSPENDING, &bdisp->state);
 
-	if (!time_left) {
+	if (!timeout) {
 		dev_err(bdisp->dev, "%s IRQ timeout\n", __func__);
 		return -EAGAIN;
 	}
@@ -1255,7 +1257,7 @@ static const struct dev_pm_ops bdisp_pm_ops = {
 	.runtime_resume         = bdisp_runtime_resume,
 };
 
-static void bdisp_remove(struct platform_device *pdev)
+static int bdisp_remove(struct platform_device *pdev)
 {
 	struct bdisp_dev *bdisp = platform_get_drvdata(pdev);
 
@@ -1275,6 +1277,8 @@ static void bdisp_remove(struct platform_device *pdev)
 	destroy_workqueue(bdisp->work_queue);
 
 	dev_dbg(&pdev->dev, "%s driver unloaded\n", pdev->name);
+
+	return 0;
 }
 
 static int bdisp_probe(struct platform_device *pdev)

@@ -199,7 +199,7 @@ static int sas_bsg_initialize(struct Scsi_Host *shost, struct sas_rphy *rphy)
 	}
 
 	if (rphy) {
-		q = bsg_setup_queue(&rphy->dev, dev_name(&rphy->dev), NULL,
+		q = bsg_setup_queue(&rphy->dev, dev_name(&rphy->dev),
 				sas_smp_dispatch, NULL, 0);
 		if (IS_ERR(q))
 			return PTR_ERR(q);
@@ -208,7 +208,7 @@ static int sas_bsg_initialize(struct Scsi_Host *shost, struct sas_rphy *rphy)
 		char name[20];
 
 		snprintf(name, sizeof(name), "sas_host%d", shost->host_no);
-		q = bsg_setup_queue(&shost->shost_gendev, name, NULL,
+		q = bsg_setup_queue(&shost->shost_gendev, name,
 				sas_smp_dispatch, NULL, 0);
 		if (IS_ERR(q))
 			return PTR_ERR(q);
@@ -890,8 +890,7 @@ static void sas_port_delete_link(struct sas_port *port,
 	sysfs_remove_link(&phy->dev.kobj, "port");
 }
 
-/**
- * sas_port_alloc - allocate and initialize a SAS port structure
+/** sas_port_alloc - allocate and initialize a SAS port structure
  *
  * @parent:	parent device
  * @port_id:	port number
@@ -900,7 +899,7 @@ static void sas_port_delete_link(struct sas_port *port,
  * below the device specified by @parent which must be either a Scsi_Host
  * or a sas_expander_device.
  *
- * Returns: %NULL on error
+ * Returns %NULL on error
  */
 struct sas_port *sas_port_alloc(struct device *parent, int port_id)
 {
@@ -935,8 +934,7 @@ struct sas_port *sas_port_alloc(struct device *parent, int port_id)
 }
 EXPORT_SYMBOL(sas_port_alloc);
 
-/**
- * sas_port_alloc_num - allocate and initialize a SAS port structure
+/** sas_port_alloc_num - allocate and initialize a SAS port structure
  *
  * @parent:	parent device
  *
@@ -946,7 +944,7 @@ EXPORT_SYMBOL(sas_port_alloc);
  * the device tree below the device specified by @parent which must be
  * either a Scsi_Host or a sas_expander_device.
  *
- * Returns: %NULL on error
+ * Returns %NULL on error
  */
 struct sas_port *sas_port_alloc_num(struct device *parent)
 {
@@ -1272,7 +1270,7 @@ int sas_read_port_mode_page(struct scsi_device *sdev)
 	if (!buffer)
 		return -ENOMEM;
 
-	error = scsi_mode_sense(sdev, 1, 0x19, 0, buffer, BUF_SIZE, 30*HZ, 3,
+	error = scsi_mode_sense(sdev, 1, 0x19, buffer, BUF_SIZE, 30*HZ, 3,
 				&mode_data, NULL);
 
 	if (error)

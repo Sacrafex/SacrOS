@@ -271,6 +271,7 @@ int saa7164_downloadfirmware(struct saa7164_dev *dev)
 			dprintk(DBGLVL_FW, "%s() Loader 1 has loaded.\n",
 				__func__);
 			first_timeout = SAA_DEVICE_TIMEOUT;
+			second_timeout = 60 * SAA_DEVICE_TIMEOUT;
 			second_timeout = 100;
 
 			err_flags = saa7164_readl(SAA_SECONDSTAGEERROR_FLAGS);
@@ -405,11 +406,8 @@ int saa7164_downloadfirmware(struct saa7164_dev *dev)
 			__func__, fwname);
 
 		ret = request_firmware(&fw, fwname, &dev->pci->dev);
-		if (ret) {
-			printk(KERN_ERR "%s() Upload failed. (file not found?)\n",
-			       __func__);
+		if (ret)
 			return -ENOMEM;
-		}
 
 		printk(KERN_INFO "%s() firmware read %zu bytes.\n",
 			__func__, fw->size);

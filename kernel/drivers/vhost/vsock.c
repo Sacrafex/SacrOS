@@ -114,7 +114,6 @@ vhost_transport_do_send_pkt(struct vhost_vsock *vsock,
 		struct sk_buff *skb;
 		unsigned out, in;
 		size_t nbytes;
-		u32 offset;
 		int head;
 
 		skb = virtio_vsock_skb_dequeue(&vsock->send_pkt_queue);
@@ -157,8 +156,7 @@ vhost_transport_do_send_pkt(struct vhost_vsock *vsock,
 		}
 
 		iov_iter_init(&iov_iter, ITER_DEST, &vq->iov[out], in, iov_len);
-		offset = VIRTIO_VSOCK_SKB_CB(skb)->offset;
-		payload_len = skb->len - offset;
+		payload_len = skb->len;
 		hdr = virtio_vsock_hdr(skb);
 
 		/* If the packet is greater than the space available in the
@@ -199,10 +197,8 @@ vhost_transport_do_send_pkt(struct vhost_vsock *vsock,
 			break;
 		}
 
-		if (skb_copy_datagram_iter(skb,
-					   offset,
-					   &iov_iter,
-					   payload_len)) {
+		nbytes = copy_to_iter(skb->data, payload_len, &iov_iter);
+		if (nbytes != payload_len) {
 			kfree_skb(skb);
 			vq_err(vq, "Faulted on copying pkt buf\n");
 			break;
@@ -216,13 +212,13 @@ vhost_transport_do_send_pkt(struct vhost_vsock *vsock,
 		vhost_add_used(vq, head, sizeof(*hdr) + payload_len);
 		added = true;
 
-		VIRTIO_VSOCK_SKB_CB(skb)->offset += payload_len;
+		skb_pull(skb, payload_len);
 		total_len += payload_len;
 
 		/* If we didn't send all the payload we can requeue the packet
 		 * to send it with the next available buffer.
 		 */
-		if (VIRTIO_VSOCK_SKB_CB(skb)->offset < skb->len) {
+		if (skb->len > 0) {
 			hdr->flags |= cpu_to_le32(flags_to_restore);
 
 			/* We are queueing the same skb to handle
@@ -244,7 +240,7 @@ vhost_transport_do_send_pkt(struct vhost_vsock *vsock,
 					restart_tx = true;
 			}
 
-			virtio_transport_consume_skb_sent(skb, true);
+			consume_skb(skb);
 		}
 	} while(likely(!vhost_exceeds_weight(vq, ++pkts, total_len)));
 	if (added)
@@ -289,7 +285,7 @@ vhost_transport_send_pkt(struct sk_buff *skb)
 		atomic_inc(&vsock->queued_replies);
 
 	virtio_vsock_skb_queue_tail(&vsock->send_pkt_queue, skb);
-	vhost_vq_work_queue(&vsock->vqs[VSOCK_VQ_RX], &vsock->send_pkt_work);
+	vhost_work_queue(&vsock->dev, &vsock->send_pkt_work);
 
 	rcu_read_unlock();
 	return len;
@@ -344,8 +340,7 @@ vhost_vsock_alloc_skb(struct vhost_virtqueue *vq,
 
 	len = iov_length(vq->iov, out);
 
-	if (len < VIRTIO_VSOCK_SKB_HEADROOM ||
-	    len > VIRTIO_VSOCK_MAX_PKT_BUF_SIZE + VIRTIO_VSOCK_SKB_HEADROOM)
+	if (len > VIRTIO_VSOCK_MAX_PKT_BUF_SIZE + VIRTIO_VSOCK_SKB_HEADROOM)
 		return NULL;
 
 	/* len contains both payload and hdr */
@@ -376,10 +371,12 @@ vhost_vsock_alloc_skb(struct vhost_virtqueue *vq,
 		return NULL;
 	}
 
-	virtio_vsock_skb_put(skb, payload_len);
+	virtio_vsock_skb_rx_put(skb);
 
-	if (skb_copy_datagram_from_iter(skb, 0, &iov_iter, payload_len)) {
-		vq_err(vq, "Failed to copy %zu byte payload\n", payload_len);
+	nbytes = copy_from_iter(skb->data, payload_len, &iov_iter);
+	if (nbytes != payload_len) {
+		vq_err(vq, "Expected %zu byte payload, got %zu bytes\n",
+		       payload_len, nbytes);
 		kfree_skb(skb);
 		return NULL;
 	}
@@ -397,11 +394,6 @@ static bool vhost_vsock_more_replies(struct vhost_vsock *vsock)
 	val = atomic_read(&vsock->queued_replies);
 
 	return val < vq->num;
-}
-
-static bool vhost_transport_msgzerocopy_allow(void)
-{
-	return true;
 }
 
 static bool vhost_transport_seqpacket_allow(u32 remote_cid);
@@ -437,8 +429,6 @@ static struct virtio_transport vhost_transport = {
 		.seqpacket_allow          = vhost_transport_seqpacket_allow,
 		.seqpacket_has_data       = virtio_transport_seqpacket_has_data,
 
-		.msgzerocopy_allow        = vhost_transport_msgzerocopy_allow,
-
 		.notify_poll_in           = virtio_transport_notify_poll_in,
 		.notify_poll_out          = virtio_transport_notify_poll_out,
 		.notify_recv_init         = virtio_transport_notify_recv_init,
@@ -450,11 +440,7 @@ static struct virtio_transport vhost_transport = {
 		.notify_send_pre_enqueue  = virtio_transport_notify_send_pre_enqueue,
 		.notify_send_post_enqueue = virtio_transport_notify_send_post_enqueue,
 		.notify_buffer_size       = virtio_transport_notify_buffer_size,
-		.notify_set_rcvlowat      = virtio_transport_notify_set_rcvlowat,
 
-		.unsent_bytes             = virtio_transport_unsent_bytes,
-
-		.read_skb = virtio_transport_read_skb,
 	},
 
 	.send_pkt = vhost_transport_send_pkt,
@@ -598,7 +584,7 @@ static int vhost_vsock_start(struct vhost_vsock *vsock)
 	/* Some packets may have been queued before the device was started,
 	 * let's kick the send worker to send them.
 	 */
-	vhost_vq_work_queue(&vsock->vqs[VSOCK_VQ_RX], &vsock->send_pkt_work);
+	vhost_work_queue(&vsock->dev, &vsock->send_pkt_work);
 
 	mutex_unlock(&vsock->dev.mutex);
 	return 0;
@@ -810,7 +796,7 @@ static int vhost_vsock_set_features(struct vhost_vsock *vsock, u64 features)
 	}
 
 	if ((features & (1ULL << VIRTIO_F_ACCESS_PLATFORM))) {
-		if (vhost_init_device_iotlb(&vsock->dev))
+		if (vhost_init_device_iotlb(&vsock->dev, true))
 			goto err;
 	}
 

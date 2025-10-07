@@ -1,5 +1,4 @@
-/* SPDX-License-Identifier: GPL-2.0-or-later
-** -*- mode: asm -*-
+/* -*- mode: asm -*-
 **
 ** head.S -- This file contains the initial boot code for the
 **	     Linux/68k kernel.
@@ -26,6 +25,11 @@
 **            for linux-2.1.115
 ** 1999/02/11  Richard Zidlicky: added Q40 support (initial version 99/01/01)
 ** 2004/05/13 Kars de Jong: Finalised HP300 support
+**
+** This file is subject to the terms and conditions of the GNU General Public
+** License. See the file README.legal in the main directory of this archive
+** for more details.
+**
 */
 
 /*
@@ -3533,16 +3537,19 @@ func_start	console_putc,%a0/%a1/%d0-%d7
 	tstl	%pc@(L(console_font))
 	jeq	L(console_exit)
 
-	lea	%pc@(L(console_globals)),%a0
-
 	/* Output character in d7 on console.
 	 */
 	movel	ARG1,%d7
 	cmpib	#'\n',%d7
+	jbne	1f
+
+	/* A little safe recursion is good for the soul */
+	console_putc	#'\r'
+1:
+	lea	%pc@(L(console_globals)),%a0
+
+	cmpib	#10,%d7
 	jne	L(console_not_lf)
-
-	clrl	%a0@(Lconsole_struct_cur_column)	/* implicit \r */
-
 	movel	%a0@(Lconsole_struct_cur_row),%d0
 	movel	%a0@(Lconsole_struct_num_rows),%d1
 	cmpl	%d1,%d0
@@ -3555,21 +3562,28 @@ func_start	console_putc,%a0/%a1/%d0-%d7
 	jra	L(console_exit)
 
 L(console_not_lf):
-	cmpib	#'\r',%d7
-	jne	L(console_not_lf_not_cr)
+	cmpib	#13,%d7
+	jne	L(console_not_cr)
 	clrl	%a0@(Lconsole_struct_cur_column)
 	jra	L(console_exit)
 
-	/*
-	 *	At this point we know that the %d7 character is going to be
-	 *	rendered on the screen.  Register usage is -
-	 *	a0 = pointer to console globals
-	 *	a1 = font data
-	 *	d0 = cursor column
-	 *	d1 = cursor row to draw the character
-	 *	d7 = character number
-	 */
-L(console_not_lf_not_cr):
+L(console_not_cr):
+	cmpib	#1,%d7
+	jne	L(console_not_home)
+	clrl	%a0@(Lconsole_struct_cur_row)
+	clrl	%a0@(Lconsole_struct_cur_column)
+	jra	L(console_exit)
+
+/*
+ *	At this point we know that the %d7 character is going to be
+ *	rendered on the screen.  Register usage is -
+ *		a0 = pointer to console globals
+ *		a1 = font data
+ *		d0 = cursor column
+ *		d1 = cursor row to draw the character
+ *		d7 = character number
+ */
+L(console_not_home):
 	movel	%a0@(Lconsole_struct_cur_column),%d0
 	movel	%a0@(Lconsole_struct_cur_row),%d1
 

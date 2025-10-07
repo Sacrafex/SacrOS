@@ -1032,5 +1032,4 @@ static struct hid_driver ntrig_driver = {
 };
 module_hid_driver(ntrig_driver);
 
-MODULE_DESCRIPTION("HID driver for N-Trig touchscreens");
 MODULE_LICENSE("GPL");

@@ -82,10 +82,9 @@ static void __exit curve25519_exit(void)
 	crypto_unregister_kpp(&curve25519_alg);
 }
 
-module_init(curve25519_init);
+subsys_initcall(curve25519_init);
 module_exit(curve25519_exit);
 
 MODULE_ALIAS_CRYPTO("curve25519");
 MODULE_ALIAS_CRYPTO("curve25519-generic");
-MODULE_DESCRIPTION("Curve25519 elliptic curve (RFC7748)");
 MODULE_LICENSE("GPL");

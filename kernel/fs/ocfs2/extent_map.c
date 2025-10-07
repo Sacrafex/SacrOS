@@ -435,16 +435,6 @@ static int ocfs2_get_clusters_nocache(struct inode *inode,
 		}
 	}
 
-	if (le16_to_cpu(el->l_next_free_rec) > le16_to_cpu(el->l_count)) {
-		ocfs2_error(inode->i_sb,
-			    "Inode %lu has an invalid extent (next_free_rec %u, count %u)\n",
-			    inode->i_ino,
-			    le16_to_cpu(el->l_next_free_rec),
-			    le16_to_cpu(el->l_count));
-		ret = -EROFS;
-		goto out;
-	}
-
 	i = ocfs2_search_extent_list(el, v_cluster);
 	if (i == -1) {
 		/*
@@ -991,13 +981,7 @@ int ocfs2_read_virt_blocks(struct inode *inode, u64 v_block, int nr,
 	}
 
 	while (done < nr) {
-		if (!down_read_trylock(&OCFS2_I(inode)->ip_alloc_sem)) {
-			rc = -EAGAIN;
-			mlog(ML_ERROR,
-				 "Inode #%llu ip_alloc_sem is temporarily unavailable\n",
-				 (unsigned long long)OCFS2_I(inode)->ip_blkno);
-			break;
-		}
+		down_read(&OCFS2_I(inode)->ip_alloc_sem);
 		rc = ocfs2_extent_map_get_blocks(inode, v_block + done,
 						 &p_block, &p_count, NULL);
 		up_read(&OCFS2_I(inode)->ip_alloc_sem);

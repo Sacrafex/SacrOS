@@ -138,7 +138,8 @@ static const struct v4l2_subdev_ops vp27smpx_ops = {
  * concerning the addresses: i2c wants 7 bit (without the r/w bit), so '>>1'
  */
 
-static int vp27smpx_probe(struct i2c_client *client)
+static int vp27smpx_probe(struct i2c_client *client,
+			  const struct i2c_device_id *id)
 {
 	struct vp27smpx_state *state;
 	struct v4l2_subdev *sd;
@@ -172,7 +173,7 @@ static void vp27smpx_remove(struct i2c_client *client)
 /* ----------------------------------------------------------------------- */
 
 static const struct i2c_device_id vp27smpx_id[] = {
-	{ "vp27smpx" },
+	{ "vp27smpx", 0 },
 	{ }
 };
 MODULE_DEVICE_TABLE(i2c, vp27smpx_id);

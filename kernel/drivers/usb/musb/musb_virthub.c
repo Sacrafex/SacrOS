@@ -14,7 +14,7 @@
 #include <linux/time.h>
 #include <linux/timer.h>
 
-#include <linux/unaligned.h>
+#include <asm/unaligned.h>
 
 #include "musb_core.h"
 
@@ -50,6 +50,7 @@ void musb_host_finish_resume(struct work_struct *work)
 
 int musb_port_suspend(struct musb *musb, bool do_suspend)
 {
+	struct usb_otg	*otg = musb->xceiv->otg;
 	u8		power;
 	void __iomem	*mbase = musb->mregs;
 
@@ -87,8 +88,7 @@ int musb_port_suspend(struct musb *musb, bool do_suspend)
 		switch (musb_get_state(musb)) {
 		case OTG_STATE_A_HOST:
 			musb_set_state(musb, OTG_STATE_A_SUSPEND);
-			musb->is_active = musb->xceiv &&
-				musb->xceiv->otg->host->b_hnp_enable;
+			musb->is_active = otg->host->b_hnp_enable;
 			if (musb->is_active)
 				mod_timer(&musb->otg_timer, jiffies
 					+ msecs_to_jiffies(
@@ -97,13 +97,12 @@ int musb_port_suspend(struct musb *musb, bool do_suspend)
 			break;
 		case OTG_STATE_B_HOST:
 			musb_set_state(musb, OTG_STATE_B_WAIT_ACON);
-			musb->is_active = musb->xceiv &&
-				musb->xceiv->otg->host->b_hnp_enable;
+			musb->is_active = otg->host->b_hnp_enable;
 			musb_platform_try_idle(musb, 0);
 			break;
 		default:
 			musb_dbg(musb, "bogus rh suspend? %s",
-				 musb_otg_state_string(musb));
+				usb_otg_state_string(musb->xceiv->otg->state));
 		}
 	} else if (power & MUSB_POWER_SUSPENDM) {
 		power &= ~MUSB_POWER_SUSPENDM;
@@ -197,6 +196,8 @@ void musb_port_reset(struct musb *musb, bool do_reset)
 
 void musb_root_disconnect(struct musb *musb)
 {
+	struct usb_otg	*otg = musb->xceiv->otg;
+
 	musb->port1_status = USB_PORT_STAT_POWER
 			| (USB_PORT_STAT_C_CONNECTION << 16);
 
@@ -205,7 +206,7 @@ void musb_root_disconnect(struct musb *musb)
 
 	switch (musb_get_state(musb)) {
 	case OTG_STATE_A_SUSPEND:
-		if (musb->xceiv && musb->xceiv->otg->host->b_hnp_enable) {
+		if (otg->host->b_hnp_enable) {
 			musb_set_state(musb, OTG_STATE_A_PERIPHERAL);
 			musb->g.is_a_peripheral = 1;
 			break;
@@ -220,7 +221,7 @@ void musb_root_disconnect(struct musb *musb)
 		break;
 	default:
 		musb_dbg(musb, "host disconnect (%s)",
-			 musb_otg_state_string(musb));
+			usb_otg_state_string(musb->xceiv->otg->state));
 	}
 }
 EXPORT_SYMBOL_GPL(musb_root_disconnect);

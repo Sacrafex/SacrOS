@@ -345,7 +345,7 @@ void rose_destroy_socket(struct sock *);
  */
 static void rose_destroy_timer(struct timer_list *t)
 {
-	struct sock *sk = timer_container_of(sk, t, sk_timer);
+	struct sock *sk = from_timer(sk, t, sk_timer);
 
 	rose_destroy_socket(sk);
 }
@@ -609,7 +609,7 @@ static struct sock *rose_make_new(struct sock *osk)
 #endif
 
 	sk->sk_type     = osk->sk_type;
-	sk->sk_priority = READ_ONCE(osk->sk_priority);
+	sk->sk_priority = osk->sk_priority;
 	sk->sk_protocol = osk->sk_protocol;
 	sk->sk_rcvbuf   = osk->sk_rcvbuf;
 	sk->sk_sndbuf   = osk->sk_sndbuf;
@@ -928,8 +928,8 @@ out_release:
 	return err;
 }
 
-static int rose_accept(struct socket *sock, struct socket *newsock,
-		       struct proto_accept_arg *arg)
+static int rose_accept(struct socket *sock, struct socket *newsock, int flags,
+		       bool kern)
 {
 	struct sk_buff *skb;
 	struct sock *newsk;
@@ -962,7 +962,7 @@ static int rose_accept(struct socket *sock, struct socket *newsock,
 		if (skb)
 			break;
 
-		if (arg->flags & O_NONBLOCK) {
+		if (flags & O_NONBLOCK) {
 			err = -EWOULDBLOCK;
 			break;
 		}
@@ -1536,6 +1536,7 @@ static const struct proto_ops rose_proto_ops = {
 	.sendmsg	=	rose_sendmsg,
 	.recvmsg	=	rose_recvmsg,
 	.mmap		=	sock_no_mmap,
+	.sendpage	=	sock_no_sendpage,
 };
 
 static struct notifier_block rose_dev_notifier = {
@@ -1639,7 +1640,7 @@ MODULE_PARM_DESC(rose_ndevs, "number of ROSE devices");
 MODULE_AUTHOR("Jonathan Naylor G4KLX <g4klx@g4klx.demon.co.uk>");
 MODULE_DESCRIPTION("The amateur radio ROSE network layer protocol");
 MODULE_LICENSE("GPL");
-MODULE_ALIAS_NETPROTO(PF_ROSE);
+/* MODULE_ALIAS_NETPROTO(PF_ROSE); */
 
 static void __exit rose_exit(void)
 {

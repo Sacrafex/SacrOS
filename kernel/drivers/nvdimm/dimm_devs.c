@@ -53,9 +53,7 @@ static int validate_dimm(struct nvdimm_drvdata *ndd)
 
 /**
  * nvdimm_init_nsarea - determine the geometry of a dimm's namespace area
- * @ndd: dimm to initialize
- *
- * Returns: %0 if the area is already valid, -errno on error
+ * @nvdimm: dimm to initialize
  */
 int nvdimm_init_nsarea(struct nvdimm_drvdata *ndd)
 {
@@ -196,7 +194,7 @@ static void nvdimm_release(struct device *dev)
 {
 	struct nvdimm *nvdimm = to_nvdimm(dev);
 
-	ida_free(&dimm_ida, nvdimm->id);
+	ida_simple_remove(&dimm_ida, nvdimm->id);
 	kfree(nvdimm);
 }
 
@@ -351,17 +349,10 @@ static ssize_t available_slots_show(struct device *dev,
 }
 static DEVICE_ATTR_RO(available_slots);
 
-static ssize_t security_show(struct device *dev,
-			     struct device_attribute *attr, char *buf)
+__weak ssize_t security_show(struct device *dev,
+		struct device_attribute *attr, char *buf)
 {
 	struct nvdimm *nvdimm = to_nvdimm(dev);
-
-	/*
-	 * For the test version we need to poll the "hardware" in order
-	 * to get the updated status for unlock testing.
-	 */
-	if (IS_ENABLED(CONFIG_NVDIMM_SECURITY_TEST))
-		nvdimm->sec.flags = nvdimm_security_flags(nvdimm, NVDIMM_USER);
 
 	if (test_bit(NVDIMM_SECURITY_OVERWRITE, &nvdimm->sec.flags))
 		return sprintf(buf, "overwrite\n");
@@ -574,7 +565,7 @@ static const struct device_type nvdimm_device_type = {
 	.groups = nvdimm_attribute_groups,
 };
 
-bool is_nvdimm(const struct device *dev)
+bool is_nvdimm(struct device *dev)
 {
 	return dev->type == &nvdimm_device_type;
 }
@@ -594,7 +585,7 @@ struct nvdimm *__nvdimm_create(struct nvdimm_bus *nvdimm_bus,
 	if (!nvdimm)
 		return NULL;
 
-	nvdimm->id = ida_alloc(&dimm_ida, GFP_KERNEL);
+	nvdimm->id = ida_simple_get(&dimm_ida, 0, 0, GFP_KERNEL);
 	if (nvdimm->id < 0) {
 		kfree(nvdimm);
 		return NULL;
@@ -724,9 +715,6 @@ static unsigned long dpa_align(struct nd_region *nd_region)
  *			   contiguous unallocated dpa range.
  * @nd_region: constrain available space check to this reference region
  * @nd_mapping: container of dpa-resource-root + labels
- *
- * Returns: %0 if there is an alignment error, otherwise the max
- *		unallocated dpa range
  */
 resource_size_t nd_pmem_max_contiguous_dpa(struct nd_region *nd_region,
 					   struct nd_mapping *nd_mapping)
@@ -772,8 +760,6 @@ resource_size_t nd_pmem_max_contiguous_dpa(struct nd_region *nd_region,
  *
  * Validate that a PMEM label, if present, aligns with the start of an
  * interleave set.
- *
- * Returns: %0 if there is an alignment error, otherwise the unallocated dpa
  */
 resource_size_t nd_pmem_available_dpa(struct nd_region *nd_region,
 				      struct nd_mapping *nd_mapping)
@@ -843,10 +829,8 @@ struct resource *nvdimm_allocate_dpa(struct nvdimm_drvdata *ndd,
 
 /**
  * nvdimm_allocated_dpa - sum up the dpa currently allocated to this label_id
- * @ndd: container of dpa-resource-root + labels
+ * @nvdimm: container of dpa-resource-root + labels
  * @label_id: dpa resource name of the form pmem-<human readable uuid>
- *
- * Returns: sum of the dpa allocated to the label_id
  */
 resource_size_t nvdimm_allocated_dpa(struct nvdimm_drvdata *ndd,
 		struct nd_label_id *label_id)

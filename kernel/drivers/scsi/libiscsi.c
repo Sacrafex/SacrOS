@@ -15,7 +15,7 @@
 #include <linux/slab.h>
 #include <linux/sched/signal.h>
 #include <linux/module.h>
-#include <linux/unaligned.h>
+#include <asm/unaligned.h>
 #include <net/tcp.h>
 #include <scsi/scsi_cmnd.h>
 #include <scsi/scsi_device.h>
@@ -1898,8 +1898,7 @@ EXPORT_SYMBOL_GPL(iscsi_target_alloc);
 
 static void iscsi_tmf_timedout(struct timer_list *t)
 {
-	struct iscsi_session *session = timer_container_of(session, t,
-							   tmf_timer);
+	struct iscsi_session *session = from_timer(session, t, tmf_timer);
 
 	spin_lock(&session->frwd_lock);
 	if (session->tmf_state == TMF_QUEUED) {
@@ -1946,7 +1945,7 @@ static int iscsi_exec_task_mgmt_fn(struct iscsi_conn *conn,
 				 session->tmf_state != TMF_QUEUED);
 	if (signal_pending(current))
 		flush_signals(current);
-	timer_delete_sync(&session->tmf_timer);
+	del_timer_sync(&session->tmf_timer);
 
 	mutex_lock(&session->eh_mutex);
 	spin_lock_bh(&session->frwd_lock);
@@ -2072,9 +2071,9 @@ static int iscsi_has_ping_timed_out(struct iscsi_conn *conn)
 		return 0;
 }
 
-enum scsi_timeout_action iscsi_eh_cmd_timed_out(struct scsi_cmnd *sc)
+enum blk_eh_timer_return iscsi_eh_cmd_timed_out(struct scsi_cmnd *sc)
 {
-	enum scsi_timeout_action rc = SCSI_EH_NOT_HANDLED;
+	enum blk_eh_timer_return rc = BLK_EH_DONE;
 	struct iscsi_task *task = NULL, *running_task;
 	struct iscsi_cls_session *cls_session;
 	struct iscsi_session *session;
@@ -2094,7 +2093,7 @@ enum scsi_timeout_action iscsi_eh_cmd_timed_out(struct scsi_cmnd *sc)
 		 * Raced with completion. Blk layer has taken ownership
 		 * so let timeout code complete it now.
 		 */
-		rc = SCSI_EH_NOT_HANDLED;
+		rc = BLK_EH_DONE;
 		spin_unlock(&session->back_lock);
 		goto done;
 	}
@@ -2103,7 +2102,7 @@ enum scsi_timeout_action iscsi_eh_cmd_timed_out(struct scsi_cmnd *sc)
 		 * Racing with the completion path right now, so give it more
 		 * time so that path can complete it like normal.
 		 */
-		rc = SCSI_EH_RESET_TIMER;
+		rc = BLK_EH_RESET_TIMER;
 		task = NULL;
 		spin_unlock(&session->back_lock);
 		goto done;
@@ -2121,21 +2120,21 @@ enum scsi_timeout_action iscsi_eh_cmd_timed_out(struct scsi_cmnd *sc)
 		if (unlikely(system_state != SYSTEM_RUNNING)) {
 			sc->result = DID_NO_CONNECT << 16;
 			ISCSI_DBG_EH(session, "sc on shutdown, handled\n");
-			rc = SCSI_EH_NOT_HANDLED;
+			rc = BLK_EH_DONE;
 			goto done;
 		}
 		/*
 		 * We are probably in the middle of iscsi recovery so let
 		 * that complete and handle the error.
 		 */
-		rc = SCSI_EH_RESET_TIMER;
+		rc = BLK_EH_RESET_TIMER;
 		goto done;
 	}
 
 	conn = session->leadconn;
 	if (!conn) {
 		/* In the middle of shuting down */
-		rc = SCSI_EH_RESET_TIMER;
+		rc = BLK_EH_RESET_TIMER;
 		goto done;
 	}
 
@@ -2152,7 +2151,7 @@ enum scsi_timeout_action iscsi_eh_cmd_timed_out(struct scsi_cmnd *sc)
 			     "Last data xfer at %lu. Last timeout was at "
 			     "%lu\n.", task->last_xfer, task->last_timeout);
 		task->have_checked_conn = false;
-		rc = SCSI_EH_RESET_TIMER;
+		rc = BLK_EH_RESET_TIMER;
 		goto done;
 	}
 
@@ -2163,7 +2162,7 @@ enum scsi_timeout_action iscsi_eh_cmd_timed_out(struct scsi_cmnd *sc)
 	 * and can let the iscsi eh handle it
 	 */
 	if (iscsi_has_ping_timed_out(conn)) {
-		rc = SCSI_EH_RESET_TIMER;
+		rc = BLK_EH_RESET_TIMER;
 		goto done;
 	}
 
@@ -2201,7 +2200,7 @@ enum scsi_timeout_action iscsi_eh_cmd_timed_out(struct scsi_cmnd *sc)
 				     task->last_xfer, running_task->last_xfer,
 				     task->last_timeout);
 			spin_unlock(&session->back_lock);
-			rc = SCSI_EH_RESET_TIMER;
+			rc = BLK_EH_RESET_TIMER;
 			goto done;
 		}
 	}
@@ -2217,14 +2216,14 @@ enum scsi_timeout_action iscsi_eh_cmd_timed_out(struct scsi_cmnd *sc)
 	 */
 	if (READ_ONCE(conn->ping_task)) {
 		task->have_checked_conn = true;
-		rc = SCSI_EH_RESET_TIMER;
+		rc = BLK_EH_RESET_TIMER;
 		goto done;
 	}
 
 	/* Make sure there is a transport check done */
 	iscsi_send_nopout(conn, NULL);
 	task->have_checked_conn = true;
-	rc = SCSI_EH_RESET_TIMER;
+	rc = BLK_EH_RESET_TIMER;
 
 done:
 	spin_unlock_bh(&session->frwd_lock);
@@ -2233,7 +2232,7 @@ done:
 		task->last_timeout = jiffies;
 		iscsi_put_task(task);
 	}
-	ISCSI_DBG_EH(session, "return %s\n", rc == SCSI_EH_RESET_TIMER ?
+	ISCSI_DBG_EH(session, "return %s\n", rc == BLK_EH_RESET_TIMER ?
 		     "timer reset" : "shutdown or nh");
 	return rc;
 }
@@ -2241,7 +2240,7 @@ EXPORT_SYMBOL_GPL(iscsi_eh_cmd_timed_out);
 
 static void iscsi_check_transport_timeouts(struct timer_list *t)
 {
-	struct iscsi_conn *conn = timer_container_of(conn, t, transport_timer);
+	struct iscsi_conn *conn = from_timer(conn, t, transport_timer);
 	struct iscsi_session *session = conn->session;
 	unsigned long recv_timeout, next_timeout = 0, last_recv;
 
@@ -2896,7 +2895,7 @@ EXPORT_SYMBOL_GPL(iscsi_host_add);
  * This should be called by partial offload and software iscsi drivers.
  * To access the driver specific memory use the iscsi_host_priv() macro.
  */
-struct Scsi_Host *iscsi_host_alloc(const struct scsi_host_template *sht,
+struct Scsi_Host *iscsi_host_alloc(struct scsi_host_template *sht,
 				   int dd_data_size, bool xmit_can_sleep)
 {
 	struct Scsi_Host *shost;
@@ -3249,7 +3248,7 @@ void iscsi_conn_teardown(struct iscsi_cls_conn *cls_conn)
 
 	iscsi_remove_conn(cls_conn);
 
-	timer_delete_sync(&conn->transport_timer);
+	del_timer_sync(&conn->transport_timer);
 
 	mutex_lock(&session->eh_mutex);
 	spin_lock_bh(&session->frwd_lock);
@@ -3413,7 +3412,7 @@ void iscsi_conn_stop(struct iscsi_cls_conn *cls_conn, int flag)
 	conn->stop_stage = flag;
 	spin_unlock_bh(&session->frwd_lock);
 
-	timer_delete_sync(&conn->transport_timer);
+	del_timer_sync(&conn->transport_timer);
 	iscsi_suspend_tx(conn);
 
 	spin_lock_bh(&session->frwd_lock);

@@ -24,7 +24,6 @@
 #include <asm/fpsimd.h>
 #include <asm/kvm.h>
 #include <asm/kvm_emulate.h>
-#include <asm/kvm_nested.h>
 #include <asm/sigcontext.h>
 
 #include "trace.h"
@@ -255,11 +254,6 @@ static int set_core_reg(struct kvm_vcpu *vcpu, const struct kvm_one_reg *reg)
 			if (!vcpu_el1_is_32bit(vcpu))
 				return -EINVAL;
 			break;
-		case PSR_MODE_EL2h:
-		case PSR_MODE_EL2t:
-			if (!vcpu_has_nv(vcpu))
-				return -EINVAL;
-			fallthrough;
 		case PSR_MODE_EL0t:
 		case PSR_MODE_EL1t:
 		case PSR_MODE_EL1h:
@@ -591,16 +585,11 @@ static unsigned long num_core_regs(const struct kvm_vcpu *vcpu)
 	return copy_core_reg_indices(vcpu, NULL);
 }
 
-static const u64 timer_reg_list[] = {
-	KVM_REG_ARM_TIMER_CTL,
-	KVM_REG_ARM_TIMER_CNT,
-	KVM_REG_ARM_TIMER_CVAL,
-	KVM_REG_ARM_PTIMER_CTL,
-	KVM_REG_ARM_PTIMER_CNT,
-	KVM_REG_ARM_PTIMER_CVAL,
-};
+/**
+ * ARM64 versions of the TIMER registers, always available on arm64
+ */
 
-#define NUM_TIMER_REGS ARRAY_SIZE(timer_reg_list)
+#define NUM_TIMER_REGS 3
 
 static bool is_timer_reg(u64 index)
 {
@@ -608,9 +597,6 @@ static bool is_timer_reg(u64 index)
 	case KVM_REG_ARM_TIMER_CTL:
 	case KVM_REG_ARM_TIMER_CNT:
 	case KVM_REG_ARM_TIMER_CVAL:
-	case KVM_REG_ARM_PTIMER_CTL:
-	case KVM_REG_ARM_PTIMER_CNT:
-	case KVM_REG_ARM_PTIMER_CVAL:
 		return true;
 	}
 	return false;
@@ -618,11 +604,14 @@ static bool is_timer_reg(u64 index)
 
 static int copy_timer_indices(struct kvm_vcpu *vcpu, u64 __user *uindices)
 {
-	for (int i = 0; i < NUM_TIMER_REGS; i++) {
-		if (put_user(timer_reg_list[i], uindices))
-			return -EFAULT;
-		uindices++;
-	}
+	if (put_user(KVM_REG_ARM_TIMER_CTL, uindices))
+		return -EFAULT;
+	uindices++;
+	if (put_user(KVM_REG_ARM_TIMER_CNT, uindices))
+		return -EFAULT;
+	uindices++;
+	if (put_user(KVM_REG_ARM_TIMER_CVAL, uindices))
+		return -EFAULT;
 
 	return 0;
 }
@@ -712,7 +701,6 @@ static int copy_sve_reg_indices(const struct kvm_vcpu *vcpu,
 
 /**
  * kvm_arm_num_regs - how many registers do we present via KVM_GET_ONE_REG
- * @vcpu: the vCPU pointer
  *
  * This is for all registers.
  */
@@ -731,8 +719,6 @@ unsigned long kvm_arm_num_regs(struct kvm_vcpu *vcpu)
 
 /**
  * kvm_arm_copy_reg_indices - get indices of all registers.
- * @vcpu: the vCPU pointer
- * @uindices: register list to copy
  *
  * We do core registers right here, then we append system regs.
  */
@@ -818,9 +804,8 @@ int kvm_arch_vcpu_ioctl_set_sregs(struct kvm_vcpu *vcpu,
 int __kvm_arm_vcpu_get_events(struct kvm_vcpu *vcpu,
 			      struct kvm_vcpu_events *events)
 {
-	events->exception.serror_has_esr = cpus_have_final_cap(ARM64_HAS_RAS_EXTN);
-	events->exception.serror_pending = (vcpu->arch.hcr_el2 & HCR_VSE) ||
-					   vcpu_get_flag(vcpu, NESTED_SERROR_PENDING);
+	events->exception.serror_pending = !!(vcpu->arch.hcr_el2 & HCR_VSE);
+	events->exception.serror_has_esr = cpus_have_const_cap(ARM64_HAS_RAS_EXTN);
 
 	if (events->exception.serror_pending && events->exception.serror_has_esr)
 		events->exception.serror_esr = vcpu_get_vsesr(vcpu);
@@ -834,62 +819,29 @@ int __kvm_arm_vcpu_get_events(struct kvm_vcpu *vcpu,
 	return 0;
 }
 
-static void commit_pending_events(struct kvm_vcpu *vcpu)
-{
-	if (!vcpu_get_flag(vcpu, PENDING_EXCEPTION))
-		return;
-
-	/*
-	 * Reset the MMIO emulation state to avoid stepping PC after emulating
-	 * the exception entry.
-	 */
-	vcpu->mmio_needed = false;
-	kvm_call_hyp(__kvm_adjust_pc, vcpu);
-}
-
 int __kvm_arm_vcpu_set_events(struct kvm_vcpu *vcpu,
 			      struct kvm_vcpu_events *events)
 {
 	bool serror_pending = events->exception.serror_pending;
 	bool has_esr = events->exception.serror_has_esr;
 	bool ext_dabt_pending = events->exception.ext_dabt_pending;
-	u64 esr = events->exception.serror_esr;
-	int ret = 0;
 
-	/*
-	 * Immediately commit the pending SEA to the vCPU's architectural
-	 * state which is necessary since we do not return a pending SEA
-	 * to userspace via KVM_GET_VCPU_EVENTS.
-	 */
-	if (ext_dabt_pending) {
-		ret = kvm_inject_sea_dabt(vcpu, kvm_vcpu_get_hfar(vcpu));
-		commit_pending_events(vcpu);
+	if (serror_pending && has_esr) {
+		if (!cpus_have_const_cap(ARM64_HAS_RAS_EXTN))
+			return -EINVAL;
+
+		if (!((events->exception.serror_esr) & ~ESR_ELx_ISS_MASK))
+			kvm_set_sei_esr(vcpu, events->exception.serror_esr);
+		else
+			return -EINVAL;
+	} else if (serror_pending) {
+		kvm_inject_vabt(vcpu);
 	}
 
-	if (ret < 0)
-		return ret;
+	if (ext_dabt_pending)
+		kvm_inject_dabt(vcpu, kvm_vcpu_get_hfar(vcpu));
 
-	if (!serror_pending)
-		return 0;
-
-	if (!cpus_have_final_cap(ARM64_HAS_RAS_EXTN) && has_esr)
-		return -EINVAL;
-
-	if (has_esr && (esr & ~ESR_ELx_ISS_MASK))
-		return -EINVAL;
-
-	if (has_esr)
-		ret = kvm_inject_serror_esr(vcpu, esr);
-	else
-		ret = kvm_inject_serror(vcpu);
-
-	/*
-	 * We could've decided that the SError is due for immediate software
-	 * injection; commit the exception in case userspace decides it wants
-	 * to inject more exceptions for some strange reason.
-	 */
-	commit_pending_events(vcpu);
-	return (ret < 0) ? ret : 0;
+	return 0;
 }
 
 u32 __attribute_const__ kvm_target_cpu(void)
@@ -922,6 +874,21 @@ u32 __attribute_const__ kvm_target_cpu(void)
 	return KVM_ARM_TARGET_GENERIC_V8;
 }
 
+void kvm_vcpu_preferred_target(struct kvm_vcpu_init *init)
+{
+	u32 target = kvm_target_cpu();
+
+	memset(init, 0, sizeof(*init));
+
+	/*
+	 * For now, we don't return any features.
+	 * In future, we might use features to return target
+	 * specific features available for the preferred
+	 * target type.
+	 */
+	init->target = (__u32)target;
+}
+
 int kvm_arch_vcpu_ioctl_get_fpu(struct kvm_vcpu *vcpu, struct kvm_fpu *fpu)
 {
 	return -EINVAL;
@@ -940,8 +907,8 @@ int kvm_arch_vcpu_ioctl_translate(struct kvm_vcpu *vcpu,
 
 /**
  * kvm_arch_vcpu_ioctl_set_guest_debug - set up guest debugging
- * @vcpu: the vCPU pointer
- * @dbg: the ioctl data buffer
+ * @kvm:	pointer to the KVM struct
+ * @kvm_guest_debug: the ioctl data buffer
  *
  * This sets up and enables the VM for guest debugging. Userspace
  * passes in a control flag to enable different debug types and
@@ -951,24 +918,31 @@ int kvm_arch_vcpu_ioctl_translate(struct kvm_vcpu *vcpu,
 int kvm_arch_vcpu_ioctl_set_guest_debug(struct kvm_vcpu *vcpu,
 					struct kvm_guest_debug *dbg)
 {
+	int ret = 0;
+
 	trace_kvm_set_guest_debug(vcpu, dbg->control);
 
-	if (dbg->control & ~KVM_GUESTDBG_VALID_MASK)
-		return -EINVAL;
-
-	if (!(dbg->control & KVM_GUESTDBG_ENABLE)) {
-		vcpu->guest_debug = 0;
-		vcpu_clear_flag(vcpu, HOST_SS_ACTIVE_PENDING);
-		return 0;
+	if (dbg->control & ~KVM_GUESTDBG_VALID_MASK) {
+		ret = -EINVAL;
+		goto out;
 	}
 
-	vcpu->guest_debug = dbg->control;
+	if (dbg->control & KVM_GUESTDBG_ENABLE) {
+		vcpu->guest_debug = dbg->control;
 
-	/* Hardware assisted Break and Watch points */
-	if (vcpu->guest_debug & KVM_GUESTDBG_USE_HW)
-		vcpu->arch.external_debug_state = dbg->arch;
+		/* Hardware assisted Break and Watch points */
+		if (vcpu->guest_debug & KVM_GUESTDBG_USE_HW) {
+			vcpu->arch.external_debug_state = dbg->arch;
+		}
 
-	return 0;
+	} else {
+		/* If not enabled clear all flags */
+		vcpu->guest_debug = 0;
+		vcpu_clear_flag(vcpu, DBG_SS_ACTIVE_PENDING);
+	}
+
+out:
+	return ret;
 }
 
 int kvm_arm_vcpu_arch_set_attr(struct kvm_vcpu *vcpu,
@@ -1042,8 +1016,8 @@ int kvm_arm_vcpu_arch_has_attr(struct kvm_vcpu *vcpu,
 	return ret;
 }
 
-int kvm_vm_ioctl_mte_copy_tags(struct kvm *kvm,
-			       struct kvm_arm_copy_mte_tags *copy_tags)
+long kvm_vm_ioctl_mte_copy_tags(struct kvm *kvm,
+				struct kvm_arm_copy_mte_tags *copy_tags)
 {
 	gpa_t guest_ipa = copy_tags->guest_ipa;
 	size_t length = copy_tags->length;
@@ -1064,72 +1038,50 @@ int kvm_vm_ioctl_mte_copy_tags(struct kvm *kvm,
 	if (length & ~PAGE_MASK || guest_ipa & ~PAGE_MASK)
 		return -EINVAL;
 
-	/* Lengths above INT_MAX cannot be represented in the return value */
-	if (length > INT_MAX)
-		return -EINVAL;
-
 	gfn = gpa_to_gfn(guest_ipa);
 
 	mutex_lock(&kvm->slots_lock);
 
-	if (write && atomic_read(&kvm->nr_memslots_dirty_logging)) {
-		ret = -EBUSY;
-		goto out;
-	}
-
 	while (length > 0) {
-		struct page *page = __gfn_to_page(kvm, gfn, write);
+		kvm_pfn_t pfn = gfn_to_pfn_prot(kvm, gfn, write, NULL);
 		void *maddr;
 		unsigned long num_tags;
-		struct folio *folio;
+		struct page *page;
 
+		if (is_error_noslot_pfn(pfn)) {
+			ret = -EFAULT;
+			goto out;
+		}
+
+		page = pfn_to_online_page(pfn);
 		if (!page) {
-			ret = -EFAULT;
-			goto out;
-		}
-
-		if (!pfn_to_online_page(page_to_pfn(page))) {
 			/* Reject ZONE_DEVICE memory */
-			kvm_release_page_unused(page);
 			ret = -EFAULT;
 			goto out;
 		}
-		folio = page_folio(page);
 		maddr = page_address(page);
 
 		if (!write) {
-			if ((folio_test_hugetlb(folio) &&
-			     folio_test_hugetlb_mte_tagged(folio)) ||
-			     page_mte_tagged(page))
+			if (page_mte_tagged(page))
 				num_tags = mte_copy_tags_to_user(tags, maddr,
 							MTE_GRANULES_PER_PAGE);
 			else
 				/* No tags in memory, so write zeros */
 				num_tags = MTE_GRANULES_PER_PAGE -
 					clear_user(tags, MTE_GRANULES_PER_PAGE);
-			kvm_release_page_clean(page);
+			kvm_release_pfn_clean(pfn);
 		} else {
-			/*
-			 * Only locking to serialise with a concurrent
-			 * __set_ptes() in the VMM but still overriding the
-			 * tags, hence ignoring the return value.
-			 */
-			if (folio_test_hugetlb(folio))
-				folio_try_hugetlb_mte_tagging(folio);
-			else
-				try_page_mte_tagging(page);
 			num_tags = mte_copy_tags_from_user(maddr, tags,
 							MTE_GRANULES_PER_PAGE);
 
-			/* uaccess failed, don't leave stale tags */
-			if (num_tags != MTE_GRANULES_PER_PAGE)
-				mte_clear_page_tags(maddr);
-			if (folio_test_hugetlb(folio))
-				folio_set_hugetlb_mte_tagged(folio);
-			else
+			/*
+			 * Set the flag after checking the write
+			 * completed fully
+			 */
+			if (num_tags == MTE_GRANULES_PER_PAGE)
 				set_page_mte_tagged(page);
 
-			kvm_release_page_dirty(page);
+			kvm_release_pfn_dirty(pfn);
 		}
 
 		if (num_tags != MTE_GRANULES_PER_PAGE) {

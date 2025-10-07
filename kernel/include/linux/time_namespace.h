@@ -7,13 +7,9 @@
 #include <linux/nsproxy.h>
 #include <linux/ns_common.h>
 #include <linux/err.h>
-#include <linux/time64.h>
 
 struct user_namespace;
 extern struct user_namespace init_user_ns;
-
-struct seq_file;
-struct vm_area_struct;
 
 struct timens_offsets {
 	struct timespec64 monotonic;
@@ -48,7 +44,7 @@ struct time_namespace *copy_time_ns(unsigned long flags,
 				    struct time_namespace *old_ns);
 void free_time_ns(struct time_namespace *ns);
 void timens_on_fork(struct nsproxy *nsproxy, struct task_struct *tsk);
-struct page *find_timens_vvar_page(struct vm_area_struct *vma);
+struct vdso_data *arch_get_vdso_data(void *vvar_page);
 
 static inline void put_time_ns(struct time_namespace *ns)
 {
@@ -143,11 +139,6 @@ static inline void timens_on_fork(struct nsproxy *nsproxy,
 				 struct task_struct *tsk)
 {
 	return;
-}
-
-static inline struct page *find_timens_vvar_page(struct vm_area_struct *vma)
-{
-	return NULL;
 }
 
 static inline void timens_add_monotonic(struct timespec64 *ts) { }

@@ -636,10 +636,9 @@ static int bcm3510_download_firmware(struct dvb_frontend* fe)
 	int ret,i;
 
 	deb_info("requesting firmware\n");
-	if ((ret = st->config->request_firmware(fe, &fw, BCM3510_DEFAULT_FIRMWARE)) < 0) {
-		err("could not load firmware (%s): %d",BCM3510_DEFAULT_FIRMWARE,ret);
+	ret = st->config->request_firmware(fe, &fw, BCM3510_DEFAULT_FIRMWARE);
+	if (ret)
 		return ret;
-	}
 	deb_info("got firmware: %zu\n", fw->size);
 
 	b = fw->data;
@@ -729,7 +728,7 @@ static int bcm3510_init_cold(struct bcm3510_state *st)
 	int ret;
 	bcm3510_register_value v;
 
-	/* read Acquisition Processor status register and check it is not in RUN mode */
+	/* read Acquisation Processor status register and check it is not in RUN mode */
 	if ((ret = bcm3510_readB(st,0xa2,&v)) < 0)
 		return ret;
 	if (v.APSTAT1_a2.RUN) {
@@ -797,6 +796,7 @@ struct dvb_frontend* bcm3510_attach(const struct bcm3510_config *config,
 				   struct i2c_adapter *i2c)
 {
 	struct bcm3510_state* state = NULL;
+	int ret;
 	bcm3510_register_value v;
 
 	/* allocate memory for the internal state */
@@ -815,7 +815,7 @@ struct dvb_frontend* bcm3510_attach(const struct bcm3510_config *config,
 
 	mutex_init(&state->hab_mutex);
 
-	if (bcm3510_readB(state, 0xe0, &v) < 0)
+	if ((ret = bcm3510_readB(state,0xe0,&v)) < 0)
 		goto error;
 
 	deb_info("Revision: 0x%1x, Layer: 0x%1x.\n",v.REVID_e0.REV,v.REVID_e0.LAYER);

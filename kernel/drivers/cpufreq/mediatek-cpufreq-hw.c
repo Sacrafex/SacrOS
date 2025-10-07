@@ -260,7 +260,7 @@ static int mtk_cpufreq_hw_cpu_init(struct cpufreq_policy *policy)
 	return 0;
 }
 
-static void mtk_cpufreq_hw_cpu_exit(struct cpufreq_policy *policy)
+static int mtk_cpufreq_hw_cpu_exit(struct cpufreq_policy *policy)
 {
 	struct mtk_cpufreq_data *data = policy->driver_data;
 	struct resource *res = data->res;
@@ -270,6 +270,8 @@ static void mtk_cpufreq_hw_cpu_exit(struct cpufreq_policy *policy)
 	writel_relaxed(0x0, data->reg_bases[REG_FREQ_ENABLE]);
 	iounmap(base);
 	release_mem_region(res->start, resource_size(res));
+
+	return 0;
 }
 
 static void mtk_cpufreq_register_em(struct cpufreq_policy *policy)
@@ -293,6 +295,7 @@ static struct cpufreq_driver cpufreq_mtk_hw_driver = {
 	.register_em	= mtk_cpufreq_register_em,
 	.fast_switch	= mtk_cpufreq_hw_fast_switch,
 	.name		= "mtk-cpufreq-hw",
+	.attr		= cpufreq_generic_attr,
 };
 
 static int mtk_cpufreq_hw_driver_probe(struct platform_device *pdev)
@@ -303,7 +306,7 @@ static int mtk_cpufreq_hw_driver_probe(struct platform_device *pdev)
 	struct regulator *cpu_reg;
 
 	/* Make sure that all CPU supplies are available before proceeding. */
-	for_each_present_cpu(cpu) {
+	for_each_possible_cpu(cpu) {
 		cpu_dev = get_cpu_device(cpu);
 		if (!cpu_dev)
 			return dev_err_probe(&pdev->dev, -EPROBE_DEFER,
@@ -330,16 +333,15 @@ static int mtk_cpufreq_hw_driver_probe(struct platform_device *pdev)
 	return ret;
 }
 
-static void mtk_cpufreq_hw_driver_remove(struct platform_device *pdev)
+static int mtk_cpufreq_hw_driver_remove(struct platform_device *pdev)
 {
-	cpufreq_unregister_driver(&cpufreq_mtk_hw_driver);
+	return cpufreq_unregister_driver(&cpufreq_mtk_hw_driver);
 }
 
 static const struct of_device_id mtk_cpufreq_hw_match[] = {
 	{ .compatible = "mediatek,cpufreq-hw", .data = &cpufreq_mtk_offsets },
 	{}
 };
-MODULE_DEVICE_TABLE(of, mtk_cpufreq_hw_match);
 
 static struct platform_driver mtk_cpufreq_hw_driver = {
 	.probe = mtk_cpufreq_hw_driver_probe,

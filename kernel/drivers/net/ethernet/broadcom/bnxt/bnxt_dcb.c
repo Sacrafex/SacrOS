@@ -16,7 +16,7 @@
 #include <linux/pci.h>
 #include <linux/etherdevice.h>
 #include <rdma/ib_verbs.h>
-#include <linux/bnxt/hsi.h>
+#include "bnxt_hsi.h"
 #include "bnxt.h"
 #include "bnxt_hwrm.h"
 #include "bnxt_dcb.h"
@@ -228,7 +228,7 @@ static int bnxt_queue_remap(struct bnxt *bp, unsigned int lltc_mask)
 		}
 	}
 	if (bp->ieee_ets) {
-		int tc = bp->num_tc;
+		int tc = netdev_get_num_tc(bp->dev);
 
 		if (!tc)
 			tc = 1;

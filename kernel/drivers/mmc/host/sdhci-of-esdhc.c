@@ -42,12 +42,6 @@ static const struct esdhc_clk_fixup ls1021a_esdhc_clk = {
 	.max_clk[MMC_TIMING_SD_HS] = 46500000,
 };
 
-static const struct esdhc_clk_fixup ls1043a_esdhc_clk = {
-	.sd_dflt_max_clk = 25000000,
-	.max_clk[MMC_TIMING_UHS_SDR104] = 116700000,
-	.max_clk[MMC_TIMING_MMC_HS200] = 116700000,
-};
-
 static const struct esdhc_clk_fixup ls1046a_esdhc_clk = {
 	.sd_dflt_max_clk = 25000000,
 	.max_clk[MMC_TIMING_UHS_SDR104] = 167000000,
@@ -69,7 +63,6 @@ static const struct esdhc_clk_fixup p1010_esdhc_clk = {
 
 static const struct of_device_id sdhci_esdhc_of_match[] = {
 	{ .compatible = "fsl,ls1021a-esdhc", .data = &ls1021a_esdhc_clk},
-	{ .compatible = "fsl,ls1043a-esdhc", .data = &ls1043a_esdhc_clk},
 	{ .compatible = "fsl,ls1046a-esdhc", .data = &ls1046a_esdhc_clk},
 	{ .compatible = "fsl,ls1012a-esdhc", .data = &ls1012a_esdhc_clk},
 	{ .compatible = "fsl,p1010-esdhc",   .data = &p1010_esdhc_clk},
@@ -98,7 +91,7 @@ struct sdhci_esdhc {
 };
 
 /**
- * esdhc_readl_fixup - Fixup the value read from incompatible eSDHC register
+ * esdhc_read*_fixup - Fixup the value read from incompatible eSDHC register
  *		       to make it compatible with SD spec.
  *
  * @host: pointer to sdhci_host
@@ -221,7 +214,7 @@ static u8 esdhc_readb_fixup(struct sdhci_host *host,
 }
 
 /**
- * esdhc_writel_fixup - Fixup the SD spec register value so that it could be
+ * esdhc_write*_fixup - Fixup the SD spec register value so that it could be
  *			written into eSDHC register.
  *
  * @host: pointer to sdhci_host
@@ -1499,11 +1492,18 @@ static int sdhci_esdhc_probe(struct platform_device *pdev)
 	/* call to generic mmc_of_parse to support additional capabilities */
 	ret = mmc_of_parse(host->mmc);
 	if (ret)
-		return ret;
+		goto err;
 
 	mmc_of_parse_voltage(host->mmc, &host->ocr_mask);
 
-	return sdhci_add_host(host);
+	ret = sdhci_add_host(host);
+	if (ret)
+		goto err;
+
+	return 0;
+ err:
+	sdhci_pltfm_free(pdev);
+	return ret;
 }
 
 static struct platform_driver sdhci_esdhc_driver = {
@@ -1514,7 +1514,7 @@ static struct platform_driver sdhci_esdhc_driver = {
 		.pm = &esdhc_of_dev_pm_ops,
 	},
 	.probe = sdhci_esdhc_probe,
-	.remove = sdhci_pltfm_remove,
+	.remove = sdhci_pltfm_unregister,
 };
 
 module_platform_driver(sdhci_esdhc_driver);

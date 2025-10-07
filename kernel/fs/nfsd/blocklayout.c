@@ -117,13 +117,12 @@ static __be32
 nfsd4_block_commit_blocks(struct inode *inode, struct nfsd4_layoutcommit *lcp,
 		struct iomap *iomaps, int nr_iomaps)
 {
-	struct timespec64 mtime = inode_get_mtime(inode);
 	loff_t new_size = lcp->lc_last_wr + 1;
 	struct iattr iattr = { .ia_valid = 0 };
 	int error;
 
 	if (lcp->lc_mtime.tv_nsec == UTIME_NOW ||
-	    timespec64_compare(&lcp->lc_mtime, &mtime) < 0)
+	    timespec64_compare(&lcp->lc_mtime, &inode->i_mtime) < 0)
 		lcp->lc_mtime = current_time(inode);
 	iattr.ia_valid |= ATTR_ATIME | ATTR_CTIME | ATTR_MTIME;
 	iattr.ia_atime = iattr.ia_ctime = iattr.ia_mtime = lcp->lc_mtime;
@@ -147,7 +146,8 @@ nfsd4_block_get_device_info_simple(struct super_block *sb,
 	struct pnfs_block_deviceaddr *dev;
 	struct pnfs_block_volume *b;
 
-	dev = kzalloc(struct_size(dev, volumes, 1), GFP_KERNEL);
+	dev = kzalloc(sizeof(struct pnfs_block_deviceaddr) +
+		      sizeof(struct pnfs_block_volume), GFP_KERNEL);
 	if (!dev)
 		return -ENOMEM;
 	gdp->gd_device = dev;
@@ -178,13 +178,11 @@ nfsd4_block_proc_layoutcommit(struct inode *inode,
 {
 	struct iomap *iomaps;
 	int nr_iomaps;
-	__be32 nfserr;
 
-	nfserr = nfsd4_block_decode_layoutupdate(lcp->lc_up_layout,
-			lcp->lc_up_len, &iomaps, &nr_iomaps,
-			i_blocksize(inode));
-	if (nfserr != nfs_ok)
-		return nfserr;
+	nr_iomaps = nfsd4_block_decode_layoutupdate(lcp->lc_up_layout,
+			lcp->lc_up_len, &iomaps, i_blocksize(inode));
+	if (nr_iomaps < 0)
+		return nfserrno(nr_iomaps);
 
 	return nfsd4_block_commit_blocks(inode, lcp, iomaps, nr_iomaps);
 }
@@ -256,7 +254,8 @@ nfsd4_block_get_device_info_scsi(struct super_block *sb,
 	const struct pr_ops *ops;
 	int ret;
 
-	dev = kzalloc(struct_size(dev, volumes, 1), GFP_KERNEL);
+	dev = kzalloc(sizeof(struct pnfs_block_deviceaddr) +
+		      sizeof(struct pnfs_block_volume), GFP_KERNEL);
 	if (!dev)
 		return -ENOMEM;
 	gdp->gd_device = dev;
@@ -318,22 +317,20 @@ nfsd4_scsi_proc_layoutcommit(struct inode *inode,
 {
 	struct iomap *iomaps;
 	int nr_iomaps;
-	__be32 nfserr;
 
-	nfserr = nfsd4_scsi_decode_layoutupdate(lcp->lc_up_layout,
-			lcp->lc_up_len, &iomaps, &nr_iomaps,
-			i_blocksize(inode));
-	if (nfserr != nfs_ok)
-		return nfserr;
+	nr_iomaps = nfsd4_scsi_decode_layoutupdate(lcp->lc_up_layout,
+			lcp->lc_up_len, &iomaps, i_blocksize(inode));
+	if (nr_iomaps < 0)
+		return nfserrno(nr_iomaps);
 
 	return nfsd4_block_commit_blocks(inode, lcp, iomaps, nr_iomaps);
 }
 
 static void
-nfsd4_scsi_fence_client(struct nfs4_layout_stateid *ls, struct nfsd_file *file)
+nfsd4_scsi_fence_client(struct nfs4_layout_stateid *ls)
 {
 	struct nfs4_client *clp = ls->ls_stid.sc_client;
-	struct block_device *bdev = file->nf_file->f_path.mnt->mnt_sb->s_bdev;
+	struct block_device *bdev = ls->ls_file->nf_file->f_path.mnt->mnt_sb->s_bdev;
 
 	bdev->bd_disk->fops->pr_ops->pr_preempt(bdev, NFSD_MDS_PR_KEY,
 			nfsd4_scsi_pr_key(clp), 0, true);

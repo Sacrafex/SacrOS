@@ -8,9 +8,9 @@
 #include <linux/of.h>
 #include <linux/kernel.h>
 #include <linux/slab.h>
-#include <linux/gpio/legacy-of-mm-gpiochip.h>
+#include <linux/of_gpio.h>
 #include <linux/io.h>
-#include <linux/platform_device.h>
+#include <linux/of_platform.h>
 #include <linux/module.h>
 
 #include <asm/mpc52xx.h>
@@ -69,7 +69,7 @@ __mpc52xx_wkup_gpio_set(struct gpio_chip *gc, unsigned int gpio, int val)
 	out_8(&regs->wkup_dvo, chip->shadow_dvo);
 }
 
-static int
+static void
 mpc52xx_wkup_gpio_set(struct gpio_chip *gc, unsigned int gpio, int val)
 {
 	unsigned long flags;
@@ -81,8 +81,6 @@ mpc52xx_wkup_gpio_set(struct gpio_chip *gc, unsigned int gpio, int val)
 	spin_unlock_irqrestore(&gpio_lock, flags);
 
 	pr_debug("%s: gpio: %d val: %d\n", __func__, gpio, val);
-
-	return 0;
 }
 
 static int mpc52xx_wkup_gpio_dir_in(struct gpio_chip *gc, unsigned int gpio)
@@ -167,11 +165,13 @@ static int mpc52xx_wkup_gpiochip_probe(struct platform_device *ofdev)
 	return 0;
 }
 
-static void mpc52xx_gpiochip_remove(struct platform_device *ofdev)
+static int mpc52xx_gpiochip_remove(struct platform_device *ofdev)
 {
 	struct mpc52xx_gpiochip *chip = platform_get_drvdata(ofdev);
 
 	of_mm_gpiochip_remove(&chip->mmchip);
+
+	return 0;
 }
 
 static const struct of_device_id mpc52xx_wkup_gpiochip_match[] = {
@@ -230,7 +230,7 @@ __mpc52xx_simple_gpio_set(struct gpio_chip *gc, unsigned int gpio, int val)
 	out_be32(&regs->simple_dvo, chip->shadow_dvo);
 }
 
-static int
+static void
 mpc52xx_simple_gpio_set(struct gpio_chip *gc, unsigned int gpio, int val)
 {
 	unsigned long flags;
@@ -242,8 +242,6 @@ mpc52xx_simple_gpio_set(struct gpio_chip *gc, unsigned int gpio, int val)
 	spin_unlock_irqrestore(&gpio_lock, flags);
 
 	pr_debug("%s: gpio: %d val: %d\n", __func__, gpio, val);
-
-	return 0;
 }
 
 static int mpc52xx_simple_gpio_dir_in(struct gpio_chip *gc, unsigned int gpio)

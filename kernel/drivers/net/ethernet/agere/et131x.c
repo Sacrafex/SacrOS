@@ -3112,8 +3112,7 @@ err_out:
  */
 static void et131x_error_timer_handler(struct timer_list *t)
 {
-	struct et131x_adapter *adapter = timer_container_of(adapter, t,
-							    error_timer);
+	struct et131x_adapter *adapter = from_timer(adapter, t, error_timer);
 	struct phy_device *phydev = adapter->netdev->phydev;
 
 	if (et1310_in_phy_coma(adapter)) {
@@ -3676,7 +3675,7 @@ static int et131x_close(struct net_device *netdev)
 	free_irq(adapter->pdev->irq, netdev);
 
 	/* Stop the error timer */
-	return timer_delete_sync(&adapter->error_timer);
+	return del_timer_sync(&adapter->error_timer);
 }
 
 /* et131x_set_packet_filter - Configures the Rx Packet filtering */
@@ -3889,7 +3888,7 @@ static int et131x_change_mtu(struct net_device *netdev, int new_mtu)
 
 	et131x_disable_txrx(netdev);
 
-	WRITE_ONCE(netdev->mtu, new_mtu);
+	netdev->mtu = new_mtu;
 
 	et131x_adapter_memory_free(adapter);
 
@@ -4019,7 +4018,8 @@ static int et131x_pci_setup(struct pci_dev *pdev,
 	}
 
 	adapter->mii_bus->name = "et131x_eth_mii";
-	snprintf(adapter->mii_bus->id, MII_BUS_ID_SIZE, "%x", pci_dev_id(adapter->pdev));
+	snprintf(adapter->mii_bus->id, MII_BUS_ID_SIZE, "%x",
+		 (adapter->pdev->bus->number << 8) | adapter->pdev->devfn);
 	adapter->mii_bus->priv = netdev;
 	adapter->mii_bus->read = et131x_mdio_read;
 	adapter->mii_bus->write = et131x_mdio_write;

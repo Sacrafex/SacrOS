@@ -97,7 +97,6 @@ set_debug(const char *val, const struct kernel_param *kp)
 }
 
 MODULE_AUTHOR("Karsten Keil");
-MODULE_DESCRIPTION("mISDN driver for Sedlbauer Speedfax+ cards");
 MODULE_LICENSE("GPL v2");
 MODULE_VERSION(SPEEDFAX_REV);
 MODULE_FIRMWARE("isdn/ISAR.BIN");
@@ -380,11 +379,8 @@ setup_instance(struct sfax_hw *card)
 	card->isar.owner = THIS_MODULE;
 
 	err = request_firmware(&firmware, "isdn/ISAR.BIN", &card->pdev->dev);
-	if (err < 0) {
-		pr_info("%s: firmware request failed %d\n",
-			card->name, err);
+	if (err)
 		goto error_fw;
-	}
 	if (debug & DEBUG_HW)
 		pr_notice("%s: got firmware %zu bytes\n",
 			  card->name, firmware->size);

@@ -365,8 +365,9 @@ static void bfusb_rx_complete(struct urb *urb)
 			buf   += 3;
 		}
 
-		if (count < len)
+		if (count < len) {
 			bt_dev_err(data->hdev, "block extends over URB buffer ranges");
+		}
 
 		if ((hdr & 0xe1) == 0xc1)
 			bfusb_recv_block(data, hdr, buf, len);
@@ -638,10 +639,8 @@ static int bfusb_probe(struct usb_interface *intf, const struct usb_device_id *i
 	skb_queue_head_init(&data->pending_q);
 	skb_queue_head_init(&data->completed_q);
 
-	if (request_firmware(&firmware, "bfubase.frm", &udev->dev) < 0) {
-		BT_ERR("Firmware request failed");
+	if (request_firmware(&firmware, "bfubase.frm", &udev->dev))
 		goto done;
-	}
 
 	BT_DBG("firmware data %p size %zu", firmware->data, firmware->size);
 
@@ -670,7 +669,7 @@ static int bfusb_probe(struct usb_interface *intf, const struct usb_device_id *i
 	hdev->flush = bfusb_flush;
 	hdev->send  = bfusb_send_frame;
 
-	hci_set_quirk(hdev, HCI_QUIRK_BROKEN_LOCAL_COMMANDS);
+	set_bit(HCI_QUIRK_BROKEN_LOCAL_COMMANDS, &hdev->quirks);
 
 	if (hci_register_dev(hdev) < 0) {
 		BT_ERR("Can't register HCI device");

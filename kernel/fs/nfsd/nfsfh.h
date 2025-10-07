@@ -49,18 +49,17 @@ struct knfsd_fh {
 					 * Points to the current size while
 					 * building a new file handle.
 					 */
-	u8		fh_raw[NFS4_FHSIZE];
+	union {
+		char			fh_raw[NFS4_FHSIZE];
+		struct {
+			u8		fh_version;	/* == 1 */
+			u8		fh_auth_type;	/* deprecated */
+			u8		fh_fsid_type;
+			u8		fh_fileid_type;
+			u32		fh_fsid[]; /* flexible-array member */
+		};
+	};
 };
-
-#define fh_version		fh_raw[0]
-#define fh_auth_type		fh_raw[1]
-#define fh_fsid_type		fh_raw[2]
-#define fh_fileid_type		fh_raw[3]
-
-static inline u32 *fh_fsid(const struct knfsd_fh *fh)
-{
-	return (u32 *)&fh->fh_raw[4];
-}
 
 static inline __u32 ino_t_to_u32(ino_t ino)
 {
@@ -89,8 +88,6 @@ typedef struct svc_fh {
 						 * wcc data is not atomic with
 						 * operation
 						 */
-	bool			fh_use_wgather;	/* NFSv2 wgather option */
-	bool			fh_64bit_cookies;/* readdir cookie size */
 	int			fh_flags;	/* FH flags */
 	bool			fh_post_saved;	/* post-op attrs saved */
 	bool			fh_pre_saved;	/* pre-op attrs saved */
@@ -218,8 +215,6 @@ extern char * SVCFH_fmt(struct svc_fh *fhp);
  * Function prototypes
  */
 __be32	fh_verify(struct svc_rqst *, struct svc_fh *, umode_t, int);
-__be32	fh_verify_local(struct net *, struct svc_cred *, struct auth_domain *,
-			struct svc_fh *, umode_t, int);
 __be32	fh_compose(struct svc_fh *, struct svc_export *, struct dentry *, struct svc_fh *);
 __be32	fh_update(struct svc_fh *);
 void	fh_put(struct svc_fh *);
@@ -261,12 +256,9 @@ static inline bool fh_match(const struct knfsd_fh *fh1,
 static inline bool fh_fsid_match(const struct knfsd_fh *fh1,
 				 const struct knfsd_fh *fh2)
 {
-	u32 *fsid1 = fh_fsid(fh1);
-	u32 *fsid2 = fh_fsid(fh2);
-
 	if (fh1->fh_fsid_type != fh2->fh_fsid_type)
 		return false;
-	if (memcmp(fsid1, fsid2, key_len(fh1->fh_fsid_type)) != 0)
+	if (memcmp(fh1->fh_fsid, fh2->fh_fsid, key_len(fh1->fh_fsid_type)) != 0)
 		return false;
 	return true;
 }
@@ -294,8 +286,35 @@ static inline void fh_clear_pre_post_attrs(struct svc_fh *fhp)
 	fhp->fh_pre_saved = false;
 }
 
-u64 nfsd4_change_attribute(const struct kstat *stat);
-__be32 __must_check fh_fill_pre_attrs(struct svc_fh *fhp);
-__be32 fh_fill_post_attrs(struct svc_fh *fhp);
-__be32 __must_check fh_fill_both_attrs(struct svc_fh *fhp);
+/*
+ * We could use i_version alone as the change attribute.  However,
+ * i_version can go backwards after a reboot.  On its own that doesn't
+ * necessarily cause a problem, but if i_version goes backwards and then
+ * is incremented again it could reuse a value that was previously used
+ * before boot, and a client who queried the two values might
+ * incorrectly assume nothing changed.
+ *
+ * By using both ctime and the i_version counter we guarantee that as
+ * long as time doesn't go backwards we never reuse an old value.
+ */
+static inline u64 nfsd4_change_attribute(struct kstat *stat,
+					 struct inode *inode)
+{
+	if (inode->i_sb->s_export_op->fetch_iversion)
+		return inode->i_sb->s_export_op->fetch_iversion(inode);
+	else if (IS_I_VERSION(inode)) {
+		u64 chattr;
+
+		chattr =  stat->ctime.tv_sec;
+		chattr <<= 30;
+		chattr += stat->ctime.tv_nsec;
+		chattr += inode_query_iversion(inode);
+		return chattr;
+	} else
+		return time_to_chattr(&stat->ctime);
+}
+
+extern void fh_fill_pre_attrs(struct svc_fh *fhp);
+extern void fh_fill_post_attrs(struct svc_fh *fhp);
+extern void fh_fill_both_attrs(struct svc_fh *fhp);
 #endif /* _LINUX_NFSD_NFSFH_H */

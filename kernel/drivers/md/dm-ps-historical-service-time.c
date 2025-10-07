@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-2.0-only
+// SPDX-License-Identifier: GPL-2.0
 /*
  * Historical Service Time
  *
@@ -553,7 +553,10 @@ static int __init dm_hst_init(void)
 
 static void __exit dm_hst_exit(void)
 {
-	dm_unregister_path_selector(&hst_ps);
+	int r = dm_unregister_path_selector(&hst_ps);
+
+	if (r < 0)
+		DMERR("unregister failed %d", r);
 }
 
 module_init(dm_hst_init);

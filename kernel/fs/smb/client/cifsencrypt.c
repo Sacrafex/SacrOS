@@ -21,45 +21,15 @@
 #include <linux/random.h>
 #include <linux/highmem.h>
 #include <linux/fips.h>
-#include <linux/iov_iter.h>
 #include "../common/arc4.h"
 #include <crypto/aead.h>
 
-static size_t cifs_shash_step(void *iter_base, size_t progress, size_t len,
-			      void *priv, void *priv2)
-{
-	struct shash_desc *shash = priv;
-	int ret, *pret = priv2;
-
-	ret = crypto_shash_update(shash, iter_base, len);
-	if (ret < 0) {
-		*pret = ret;
-		return len;
-	}
-	return 0;
-}
-
-/*
- * Pass the data from an iterator into a hash.
- */
-static int cifs_shash_iter(const struct iov_iter *iter, size_t maxsize,
-			   struct shash_desc *shash)
-{
-	struct iov_iter tmp_iter = *iter;
-	int err = -EIO;
-
-	if (iterate_and_advance_kernel(&tmp_iter, maxsize, shash, &err,
-				       cifs_shash_step) != maxsize)
-		return err;
-	return 0;
-}
-
 int __cifs_calc_signature(struct smb_rqst *rqst,
-			  struct TCP_Server_Info *server, char *signature,
-			  struct shash_desc *shash)
+			struct TCP_Server_Info *server, char *signature,
+			struct shash_desc *shash)
 {
 	int i;
-	ssize_t rc;
+	int rc;
 	struct kvec *iov = rqst->rq_iov;
 	int n_vec = rqst->rq_nvec;
 
@@ -91,9 +61,25 @@ int __cifs_calc_signature(struct smb_rqst *rqst,
 		}
 	}
 
-	rc = cifs_shash_iter(&rqst->rq_iter, iov_iter_count(&rqst->rq_iter), shash);
-	if (rc < 0)
-		return rc;
+	/* now hash over the rq_pages array */
+	for (i = 0; i < rqst->rq_npages; i++) {
+		void *kaddr;
+		unsigned int len, offset;
+
+		rqst_page_get_length(rqst, i, &len, &offset);
+
+		kaddr = (char *) kmap(rqst->rq_pages[i]) + offset;
+
+		rc = crypto_shash_update(shash, kaddr, len);
+		if (rc) {
+			cifs_dbg(VFS, "%s: Could not update with payload\n",
+				 __func__);
+			kunmap(rqst->rq_pages[i]);
+			return rc;
+		}
+
+		kunmap(rqst->rq_pages[i]);
+	}
 
 	rc = crypto_shash_final(shash, signature);
 	if (rc)
@@ -239,7 +225,7 @@ int cifs_verify_signature(struct smb_rqst *rqst,
 		cifs_dbg(FYI, "dummy signature received for smb command 0x%x\n",
 			 cifs_pdu->Command);
 
-	/* save off the original signature so we can modify the smb and check
+	/* save off the origiginal signature so we can modify the smb and check
 		its signature against what the server sent */
 	memcpy(server_response_sig, cifs_pdu->Signature.SecuritySignature, 8);
 
@@ -315,72 +301,59 @@ build_avpair_blob(struct cifs_ses *ses, const struct nls_table *nls_cp)
 	return 0;
 }
 
-#define AV_TYPE(av)		(le16_to_cpu(av->type))
-#define AV_LEN(av)		(le16_to_cpu(av->length))
-#define AV_DATA_PTR(av)	((void *)av->data)
-
-#define av_for_each_entry(ses, av) \
-	for (av = NULL; (av = find_next_av(ses, av));)
-
-static struct ntlmssp2_name *find_next_av(struct cifs_ses *ses,
-					  struct ntlmssp2_name *av)
-{
-	u16 len;
-	u8 *end;
-
-	end = (u8 *)ses->auth_key.response + ses->auth_key.len;
-	if (!av) {
-		if (unlikely(!ses->auth_key.response || !ses->auth_key.len))
-			return NULL;
-		av = (void *)ses->auth_key.response;
-	} else {
-		av = (void *)((u8 *)av + sizeof(*av) + AV_LEN(av));
-	}
-
-	if ((u8 *)av + sizeof(*av) > end)
-		return NULL;
-
-	len = AV_LEN(av);
-	if (AV_TYPE(av) == NTLMSSP_AV_EOL)
-		return NULL;
-	if ((u8 *)av + sizeof(*av) + len > end)
-		return NULL;
-	return av;
-}
-
-/*
- * Check if server has provided av pair of @type in the NTLMSSP
- * CHALLENGE_MESSAGE blob.
+/* Server has provided av pairs/target info in the type 2 challenge
+ * packet and we have plucked it and stored within smb session.
+ * We parse that blob here to find netbios domain name to be used
+ * as part of ntlmv2 authentication (in Target String), if not already
+ * specified on the command line.
+ * If this function returns without any error but without fetching
+ * domain name, authentication may fail against some server but
+ * may not fail against other (those who are not very particular
+ * about target string i.e. for some, just user name might suffice.
  */
-static int find_av_name(struct cifs_ses *ses, u16 type, char **name, u16 maxlen)
+static int
+find_domain_name(struct cifs_ses *ses, const struct nls_table *nls_cp)
 {
-	const struct nls_table *nlsc = ses->local_nls;
-	struct ntlmssp2_name *av;
-	u16 len, nlen;
+	unsigned int attrsize;
+	unsigned int type;
+	unsigned int onesize = sizeof(struct ntlmssp2_name);
+	unsigned char *blobptr;
+	unsigned char *blobend;
+	struct ntlmssp2_name *attrptr;
 
-	if (*name)
+	if (!ses->auth_key.len || !ses->auth_key.response)
 		return 0;
 
-	av_for_each_entry(ses, av) {
-		len = AV_LEN(av);
-		if (AV_TYPE(av) != type || !len)
-			continue;
-		if (!IS_ALIGNED(len, sizeof(__le16))) {
-			cifs_dbg(VFS | ONCE, "%s: bad length(%u) for type %u\n",
-				 __func__, len, type);
-			continue;
-		}
-		nlen = len / sizeof(__le16);
-		if (nlen <= maxlen) {
-			++nlen;
-			*name = kmalloc(nlen, GFP_KERNEL);
-			if (!*name)
-				return -ENOMEM;
-			cifs_from_utf16(*name, AV_DATA_PTR(av), nlen,
-					len, nlsc, NO_MAP_UNI_RSVD);
+	blobptr = ses->auth_key.response;
+	blobend = blobptr + ses->auth_key.len;
+
+	while (blobptr + onesize < blobend) {
+		attrptr = (struct ntlmssp2_name *) blobptr;
+		type = le16_to_cpu(attrptr->type);
+		if (type == NTLMSSP_AV_EOL)
 			break;
+		blobptr += 2; /* advance attr type */
+		attrsize = le16_to_cpu(attrptr->length);
+		blobptr += 2; /* advance attr size */
+		if (blobptr + attrsize > blobend)
+			break;
+		if (type == NTLMSSP_AV_NB_DOMAIN_NAME) {
+			if (!attrsize || attrsize >= CIFS_MAX_DOMAINNAME_LEN)
+				break;
+			if (!ses->domainName) {
+				ses->domainName =
+					kmalloc(attrsize + 1, GFP_KERNEL);
+				if (!ses->domainName)
+						return -ENOMEM;
+				cifs_from_utf16(ses->domainName,
+					(__le16 *)blobptr, attrsize, attrsize,
+					nls_cp, NO_MAP_UNI_RSVD);
+				break;
+			}
 		}
+		blobptr += attrsize; /* advance attr  value */
 	}
+
 	return 0;
 }
 
@@ -390,22 +363,46 @@ static int find_av_name(struct cifs_ses *ses, u16 type, char **name, u16 maxlen)
  * as part of ntlmv2 authentication (or local current time as
  * default in case of failure)
  */
-static __le64 find_timestamp(struct cifs_ses *ses)
+static __le64
+find_timestamp(struct cifs_ses *ses)
 {
-	struct ntlmssp2_name *av;
+	unsigned int attrsize;
+	unsigned int type;
+	unsigned int onesize = sizeof(struct ntlmssp2_name);
+	unsigned char *blobptr;
+	unsigned char *blobend;
+	struct ntlmssp2_name *attrptr;
 	struct timespec64 ts;
 
-	av_for_each_entry(ses, av) {
-		if (AV_TYPE(av) == NTLMSSP_AV_TIMESTAMP &&
-		    AV_LEN(av) == sizeof(u64))
-			return *((__le64 *)AV_DATA_PTR(av));
+	if (!ses->auth_key.len || !ses->auth_key.response)
+		return 0;
+
+	blobptr = ses->auth_key.response;
+	blobend = blobptr + ses->auth_key.len;
+
+	while (blobptr + onesize < blobend) {
+		attrptr = (struct ntlmssp2_name *) blobptr;
+		type = le16_to_cpu(attrptr->type);
+		if (type == NTLMSSP_AV_EOL)
+			break;
+		blobptr += 2; /* advance attr type */
+		attrsize = le16_to_cpu(attrptr->length);
+		blobptr += 2; /* advance attr size */
+		if (blobptr + attrsize > blobend)
+			break;
+		if (type == NTLMSSP_AV_TIMESTAMP) {
+			if (attrsize == sizeof(u64))
+				return *((__le64 *)blobptr);
+		}
+		blobptr += attrsize; /* advance attr value */
 	}
+
 	ktime_get_real_ts64(&ts);
 	return cpu_to_le64(cifs_UnixTimeToNT(ts));
 }
 
 static int calc_ntlmv2_hash(struct cifs_ses *ses, char *ntlmv2_hash,
-			    const struct nls_table *nls_cp, struct shash_desc *hmacmd5)
+			    const struct nls_table *nls_cp)
 {
 	int rc = 0;
 	int len;
@@ -414,26 +411,34 @@ static int calc_ntlmv2_hash(struct cifs_ses *ses, char *ntlmv2_hash,
 	wchar_t *domain;
 	wchar_t *server;
 
+	if (!ses->server->secmech.hmacmd5) {
+		cifs_dbg(VFS, "%s: can't generate ntlmv2 hash\n", __func__);
+		return -1;
+	}
+
 	/* calculate md4 hash of password */
 	E_md4hash(ses->password, nt_hash, nls_cp);
 
-	rc = crypto_shash_setkey(hmacmd5->tfm, nt_hash, CIFS_NTHASH_SIZE);
+	rc = crypto_shash_setkey(ses->server->secmech.hmacmd5->tfm, nt_hash,
+				CIFS_NTHASH_SIZE);
 	if (rc) {
-		cifs_dbg(VFS, "%s: Could not set NT hash as a key, rc=%d\n", __func__, rc);
+		cifs_dbg(VFS, "%s: Could not set NT Hash as a key\n", __func__);
 		return rc;
 	}
 
-	rc = crypto_shash_init(hmacmd5);
+	rc = crypto_shash_init(ses->server->secmech.hmacmd5);
 	if (rc) {
-		cifs_dbg(VFS, "%s: Could not init HMAC-MD5, rc=%d\n", __func__, rc);
+		cifs_dbg(VFS, "%s: Could not init hmacmd5\n", __func__);
 		return rc;
 	}
 
 	/* convert ses->user_name to unicode */
 	len = ses->user_name ? strlen(ses->user_name) : 0;
 	user = kmalloc(2 + (len * 2), GFP_KERNEL);
-	if (user == NULL)
-		return -ENOMEM;
+	if (user == NULL) {
+		rc = -ENOMEM;
+		return rc;
+	}
 
 	if (len) {
 		len = cifs_strtoUTF16(user, ses->user_name, len, nls_cp);
@@ -442,10 +447,11 @@ static int calc_ntlmv2_hash(struct cifs_ses *ses, char *ntlmv2_hash,
 		*(u16 *)user = 0;
 	}
 
-	rc = crypto_shash_update(hmacmd5, (char *)user, 2 * len);
+	rc = crypto_shash_update(ses->server->secmech.hmacmd5,
+				(char *)user, 2 * len);
 	kfree(user);
 	if (rc) {
-		cifs_dbg(VFS, "%s: Could not update with user, rc=%d\n", __func__, rc);
+		cifs_dbg(VFS, "%s: Could not update with user\n", __func__);
 		return rc;
 	}
 
@@ -454,15 +460,19 @@ static int calc_ntlmv2_hash(struct cifs_ses *ses, char *ntlmv2_hash,
 		len = strlen(ses->domainName);
 
 		domain = kmalloc(2 + (len * 2), GFP_KERNEL);
-		if (domain == NULL)
-			return -ENOMEM;
-
+		if (domain == NULL) {
+			rc = -ENOMEM;
+			return rc;
+		}
 		len = cifs_strtoUTF16((__le16 *)domain, ses->domainName, len,
 				      nls_cp);
-		rc = crypto_shash_update(hmacmd5, (char *)domain, 2 * len);
+		rc =
+		crypto_shash_update(ses->server->secmech.hmacmd5,
+					(char *)domain, 2 * len);
 		kfree(domain);
 		if (rc) {
-			cifs_dbg(VFS, "%s: Could not update with domain, rc=%d\n", __func__, rc);
+			cifs_dbg(VFS, "%s: Could not update with domain\n",
+				 __func__);
 			return rc;
 		}
 	} else {
@@ -470,27 +480,33 @@ static int calc_ntlmv2_hash(struct cifs_ses *ses, char *ntlmv2_hash,
 		len = strlen(ses->ip_addr);
 
 		server = kmalloc(2 + (len * 2), GFP_KERNEL);
-		if (server == NULL)
-			return -ENOMEM;
-
-		len = cifs_strtoUTF16((__le16 *)server, ses->ip_addr, len, nls_cp);
-		rc = crypto_shash_update(hmacmd5, (char *)server, 2 * len);
+		if (server == NULL) {
+			rc = -ENOMEM;
+			return rc;
+		}
+		len = cifs_strtoUTF16((__le16 *)server, ses->ip_addr, len,
+					nls_cp);
+		rc =
+		crypto_shash_update(ses->server->secmech.hmacmd5,
+					(char *)server, 2 * len);
 		kfree(server);
 		if (rc) {
-			cifs_dbg(VFS, "%s: Could not update with server, rc=%d\n", __func__, rc);
+			cifs_dbg(VFS, "%s: Could not update with server\n",
+				 __func__);
 			return rc;
 		}
 	}
 
-	rc = crypto_shash_final(hmacmd5, ntlmv2_hash);
+	rc = crypto_shash_final(ses->server->secmech.hmacmd5,
+					ntlmv2_hash);
 	if (rc)
-		cifs_dbg(VFS, "%s: Could not generate MD5 hash, rc=%d\n", __func__, rc);
+		cifs_dbg(VFS, "%s: Could not generate md5 hash\n", __func__);
 
 	return rc;
 }
 
 static int
-CalcNTLMv2_response(const struct cifs_ses *ses, char *ntlmv2_hash, struct shash_desc *hmacmd5)
+CalcNTLMv2_response(const struct cifs_ses *ses, char *ntlmv2_hash)
 {
 	int rc;
 	struct ntlmv2_resp *ntlmv2 = (struct ntlmv2_resp *)
@@ -501,98 +517,57 @@ CalcNTLMv2_response(const struct cifs_ses *ses, char *ntlmv2_hash, struct shash_
 	hash_len = ses->auth_key.len - (CIFS_SESS_KEY_SIZE +
 		offsetof(struct ntlmv2_resp, challenge.key[0]));
 
-	rc = crypto_shash_setkey(hmacmd5->tfm, ntlmv2_hash, CIFS_HMAC_MD5_HASH_SIZE);
+	if (!ses->server->secmech.hmacmd5) {
+		cifs_dbg(VFS, "%s: can't generate ntlmv2 hash\n", __func__);
+		return -1;
+	}
+
+	rc = crypto_shash_setkey(ses->server->secmech.hmacmd5->tfm,
+				 ntlmv2_hash, CIFS_HMAC_MD5_HASH_SIZE);
 	if (rc) {
-		cifs_dbg(VFS, "%s: Could not set NTLMv2 hash as a key, rc=%d\n", __func__, rc);
+		cifs_dbg(VFS, "%s: Could not set NTLMV2 Hash as a key\n",
+			 __func__);
 		return rc;
 	}
 
-	rc = crypto_shash_init(hmacmd5);
+	rc = crypto_shash_init(ses->server->secmech.hmacmd5);
 	if (rc) {
-		cifs_dbg(VFS, "%s: Could not init HMAC-MD5, rc=%d\n", __func__, rc);
+		cifs_dbg(VFS, "%s: Could not init hmacmd5\n", __func__);
 		return rc;
 	}
 
 	if (ses->server->negflavor == CIFS_NEGFLAVOR_EXTENDED)
-		memcpy(ntlmv2->challenge.key, ses->ntlmssp->cryptkey, CIFS_SERVER_CHALLENGE_SIZE);
+		memcpy(ntlmv2->challenge.key,
+		       ses->ntlmssp->cryptkey, CIFS_SERVER_CHALLENGE_SIZE);
 	else
-		memcpy(ntlmv2->challenge.key, ses->server->cryptkey, CIFS_SERVER_CHALLENGE_SIZE);
-
-	rc = crypto_shash_update(hmacmd5, ntlmv2->challenge.key, hash_len);
+		memcpy(ntlmv2->challenge.key,
+		       ses->server->cryptkey, CIFS_SERVER_CHALLENGE_SIZE);
+	rc = crypto_shash_update(ses->server->secmech.hmacmd5,
+				 ntlmv2->challenge.key, hash_len);
 	if (rc) {
-		cifs_dbg(VFS, "%s: Could not update with response, rc=%d\n", __func__, rc);
+		cifs_dbg(VFS, "%s: Could not update with response\n", __func__);
 		return rc;
 	}
 
 	/* Note that the MD5 digest over writes anon.challenge_key.key */
-	rc = crypto_shash_final(hmacmd5, ntlmv2->ntlmv2_hash);
+	rc = crypto_shash_final(ses->server->secmech.hmacmd5,
+				ntlmv2->ntlmv2_hash);
 	if (rc)
-		cifs_dbg(VFS, "%s: Could not generate MD5 hash, rc=%d\n", __func__, rc);
+		cifs_dbg(VFS, "%s: Could not generate md5 hash\n", __func__);
 
-	return rc;
-}
-
-/*
- * Set up NTLMv2 response blob with SPN (cifs/<hostname>) appended to the
- * existing list of AV pairs.
- */
-static int set_auth_key_response(struct cifs_ses *ses)
-{
-	size_t baselen = CIFS_SESS_KEY_SIZE + sizeof(struct ntlmv2_resp);
-	size_t len, spnlen, tilen = 0, num_avs = 2 /* SPN + EOL */;
-	struct TCP_Server_Info *server = ses->server;
-	char *spn __free(kfree) = NULL;
-	struct ntlmssp2_name *av;
-	char *rsp = NULL;
-	int rc;
-
-	spnlen = strlen(server->hostname);
-	len = sizeof("cifs/") + spnlen;
-	spn = kmalloc(len, GFP_KERNEL);
-	if (!spn) {
-		rc = -ENOMEM;
-		goto out;
-	}
-
-	spnlen = scnprintf(spn, len, "cifs/%.*s",
-			   (int)spnlen, server->hostname);
-
-	av_for_each_entry(ses, av)
-		tilen += sizeof(*av) + AV_LEN(av);
-
-	len = baselen + tilen + spnlen * sizeof(__le16) + num_avs * sizeof(*av);
-	rsp = kmalloc(len, GFP_KERNEL);
-	if (!rsp) {
-		rc = -ENOMEM;
-		goto out;
-	}
-
-	memcpy(rsp + baselen, ses->auth_key.response, tilen);
-	av = (void *)(rsp + baselen + tilen);
-	av->type = cpu_to_le16(NTLMSSP_AV_TARGET_NAME);
-	av->length = cpu_to_le16(spnlen * sizeof(__le16));
-	cifs_strtoUTF16((__le16 *)av->data, spn, spnlen, ses->local_nls);
-	av = (void *)((__u8 *)av + sizeof(*av) + AV_LEN(av));
-	av->type = cpu_to_le16(NTLMSSP_AV_EOL);
-	av->length = 0;
-
-	rc = 0;
-	ses->auth_key.len = len;
-out:
-	ses->auth_key.response = rsp;
 	return rc;
 }
 
 int
 setup_ntlmv2_rsp(struct cifs_ses *ses, const struct nls_table *nls_cp)
 {
-	struct shash_desc *hmacmd5 = NULL;
-	unsigned char *tiblob = NULL; /* target info blob */
+	int rc;
+	int baselen;
+	unsigned int tilen;
 	struct ntlmv2_resp *ntlmv2;
 	char ntlmv2_hash[16];
+	unsigned char *tiblob = NULL; /* target info blob */
 	__le64 rsp_timestamp;
-	__u64 cc;
-	int rc;
 
 	if (nls_cp == NULL) {
 		cifs_dbg(VFS, "%s called with nls_cp==NULL\n", __func__);
@@ -602,29 +577,16 @@ setup_ntlmv2_rsp(struct cifs_ses *ses, const struct nls_table *nls_cp)
 	if (ses->server->negflavor == CIFS_NEGFLAVOR_EXTENDED) {
 		if (!ses->domainName) {
 			if (ses->domainAuto) {
-				/*
-				 * Domain (workgroup) hasn't been specified in
-				 * mount options, so try to find it in
-				 * CHALLENGE_MESSAGE message and then use it as
-				 * part of NTLMv2 authentication.
-				 */
-				rc = find_av_name(ses, NTLMSSP_AV_NB_DOMAIN_NAME,
-						  &ses->domainName,
-						  CIFS_MAX_DOMAINNAME_LEN);
-				if (rc)
-					goto setup_ntlmv2_rsp_ret;
-			} else {
-				ses->domainName = kstrdup("", GFP_KERNEL);
-				if (!ses->domainName) {
-					rc = -ENOMEM;
+				rc = find_domain_name(ses, nls_cp);
+				if (rc) {
+					cifs_dbg(VFS, "error %d finding domain name\n",
+						 rc);
 					goto setup_ntlmv2_rsp_ret;
 				}
+			} else {
+				ses->domainName = kstrdup("", GFP_KERNEL);
 			}
 		}
-		rc = find_av_name(ses, NTLMSSP_AV_DNS_DOMAIN_NAME,
-				  &ses->dns_dom, CIFS_MAX_DOMAINNAME_LEN);
-		if (rc)
-			goto setup_ntlmv2_rsp_ret;
 	} else {
 		rc = build_avpair_blob(ses, nls_cp);
 		if (rc) {
@@ -638,70 +600,81 @@ setup_ntlmv2_rsp(struct cifs_ses *ses, const struct nls_table *nls_cp)
 	 * (as Windows 7 does)
 	 */
 	rsp_timestamp = find_timestamp(ses);
-	get_random_bytes(&cc, sizeof(cc));
 
-	cifs_server_lock(ses->server);
-
+	baselen = CIFS_SESS_KEY_SIZE + sizeof(struct ntlmv2_resp);
+	tilen = ses->auth_key.len;
 	tiblob = ses->auth_key.response;
-	rc = set_auth_key_response(ses);
-	if (rc) {
+
+	ses->auth_key.response = kmalloc(baselen + tilen, GFP_KERNEL);
+	if (!ses->auth_key.response) {
+		rc = -ENOMEM;
 		ses->auth_key.len = 0;
-		goto unlock;
+		goto setup_ntlmv2_rsp_ret;
 	}
+	ses->auth_key.len += baselen;
 
 	ntlmv2 = (struct ntlmv2_resp *)
 			(ses->auth_key.response + CIFS_SESS_KEY_SIZE);
 	ntlmv2->blob_signature = cpu_to_le32(0x00000101);
 	ntlmv2->reserved = 0;
 	ntlmv2->time = rsp_timestamp;
-	ntlmv2->client_chal = cc;
+
+	get_random_bytes(&ntlmv2->client_chal, sizeof(ntlmv2->client_chal));
 	ntlmv2->reserved2 = 0;
 
-	rc = cifs_alloc_hash("hmac(md5)", &hmacmd5);
+	memcpy(ses->auth_key.response + baselen, tiblob, tilen);
+
+	cifs_server_lock(ses->server);
+
+	rc = cifs_alloc_hash("hmac(md5)", &ses->server->secmech.hmacmd5);
 	if (rc) {
-		cifs_dbg(VFS, "Could not allocate HMAC-MD5, rc=%d\n", rc);
 		goto unlock;
 	}
 
 	/* calculate ntlmv2_hash */
-	rc = calc_ntlmv2_hash(ses, ntlmv2_hash, nls_cp, hmacmd5);
+	rc = calc_ntlmv2_hash(ses, ntlmv2_hash, nls_cp);
 	if (rc) {
-		cifs_dbg(VFS, "Could not get NTLMv2 hash, rc=%d\n", rc);
+		cifs_dbg(VFS, "Could not get v2 hash rc %d\n", rc);
 		goto unlock;
 	}
 
 	/* calculate first part of the client response (CR1) */
-	rc = CalcNTLMv2_response(ses, ntlmv2_hash, hmacmd5);
+	rc = CalcNTLMv2_response(ses, ntlmv2_hash);
 	if (rc) {
-		cifs_dbg(VFS, "Could not calculate CR1, rc=%d\n", rc);
+		cifs_dbg(VFS, "Could not calculate CR1 rc: %d\n", rc);
 		goto unlock;
 	}
 
 	/* now calculate the session key for NTLMv2 */
-	rc = crypto_shash_setkey(hmacmd5->tfm, ntlmv2_hash, CIFS_HMAC_MD5_HASH_SIZE);
+	rc = crypto_shash_setkey(ses->server->secmech.hmacmd5->tfm,
+		ntlmv2_hash, CIFS_HMAC_MD5_HASH_SIZE);
 	if (rc) {
-		cifs_dbg(VFS, "%s: Could not set NTLMv2 hash as a key, rc=%d\n", __func__, rc);
+		cifs_dbg(VFS, "%s: Could not set NTLMV2 Hash as a key\n",
+			 __func__);
 		goto unlock;
 	}
 
-	rc = crypto_shash_init(hmacmd5);
+	rc = crypto_shash_init(ses->server->secmech.hmacmd5);
 	if (rc) {
-		cifs_dbg(VFS, "%s: Could not init HMAC-MD5, rc=%d\n", __func__, rc);
+		cifs_dbg(VFS, "%s: Could not init hmacmd5\n", __func__);
 		goto unlock;
 	}
 
-	rc = crypto_shash_update(hmacmd5, ntlmv2->ntlmv2_hash, CIFS_HMAC_MD5_HASH_SIZE);
+	rc = crypto_shash_update(ses->server->secmech.hmacmd5,
+		ntlmv2->ntlmv2_hash,
+		CIFS_HMAC_MD5_HASH_SIZE);
 	if (rc) {
-		cifs_dbg(VFS, "%s: Could not update with response, rc=%d\n", __func__, rc);
+		cifs_dbg(VFS, "%s: Could not update with response\n", __func__);
 		goto unlock;
 	}
 
-	rc = crypto_shash_final(hmacmd5, ses->auth_key.response);
+	rc = crypto_shash_final(ses->server->secmech.hmacmd5,
+		ses->auth_key.response);
 	if (rc)
-		cifs_dbg(VFS, "%s: Could not generate MD5 hash, rc=%d\n", __func__, rc);
+		cifs_dbg(VFS, "%s: Could not generate md5 hash\n", __func__);
+
 unlock:
 	cifs_server_unlock(ses->server);
-	cifs_free_hash(&hmacmd5);
 setup_ntlmv2_rsp_ret:
 	kfree_sensitive(tiblob);
 
@@ -746,11 +719,13 @@ cifs_crypto_secmech_release(struct TCP_Server_Info *server)
 	cifs_free_hash(&server->secmech.hmacsha256);
 	cifs_free_hash(&server->secmech.md5);
 	cifs_free_hash(&server->secmech.sha512);
+	cifs_free_hash(&server->secmech.hmacmd5);
 
 	if (server->secmech.enc) {
 		crypto_free_aead(server->secmech.enc);
 		server->secmech.enc = NULL;
 	}
+
 	if (server->secmech.dec) {
 		crypto_free_aead(server->secmech.dec);
 		server->secmech.dec = NULL;

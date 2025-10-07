@@ -232,7 +232,7 @@ restart:
 		 * If not already working on one, grab the next message.
 		 *
 		 * cp_xmit_rm holds a ref while we're sending this message down
-		 * the connection.  We can use this ref while holding the
+		 * the connction.  We can use this ref while holding the
 		 * send_sem.. rds_send_reset() is serialized with it.
 		 */
 		if (!rm) {
@@ -1113,7 +1113,7 @@ int rds_sendmsg(struct socket *sock, struct msghdr *msg, size_t payload_len)
 	struct rds_conn_path *cpath;
 	struct in6_addr daddr;
 	__u32 scope_id = 0;
-	size_t rdma_payload_len = 0;
+	size_t total_payload_len = payload_len, rdma_payload_len = 0;
 	bool zcopy = ((msg->msg_flags & MSG_ZEROCOPY) &&
 		      sock_flag(rds_rs_to_sk(rs), SOCK_ZEROCOPY));
 	int num_sgs = DIV_ROUND_UP(payload_len, PAGE_SIZE);
@@ -1242,6 +1242,7 @@ int rds_sendmsg(struct socket *sock, struct msghdr *msg, size_t payload_len)
 	if (ret)
 		goto out;
 
+	total_payload_len += rdma_payload_len;
 	if (max_t(size_t, payload_len, rdma_payload_len) > RDS_MAX_MSG_SIZE) {
 		ret = -EMSGSIZE;
 		goto out;

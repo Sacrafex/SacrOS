@@ -7,6 +7,7 @@
 #include <drm/drm_atomic.h>
 #include <drm/drm_atomic_helper.h>
 #include <drm/drm_crtc.h>
+#include <drm/drm_crtc_helper.h>
 #include <drm/drm_gem_dma_helper.h>
 #include <drm/drm_vblank.h>
 
@@ -130,7 +131,7 @@ static void tidss_crtc_position_planes(struct tidss_device *tidss,
 	    !to_tidss_crtc_state(cstate)->plane_pos_changed)
 		return;
 
-	for (layer = 0; layer < tidss->feat->num_vids ; layer++) {
+	for (layer = 0; layer < tidss->feat->num_planes; layer++) {
 		struct drm_plane_state *pstate;
 		struct drm_plane *plane;
 		bool layer_active = false;
@@ -173,6 +174,10 @@ static void tidss_crtc_atomic_flush(struct drm_crtc *crtc,
 		__func__, crtc->name, crtc->state->active ? "" : "not ",
 		drm_atomic_crtc_needs_modeset(crtc->state) ? "needs" : "doesn't need",
 		crtc->state->event);
+
+	/* There is nothing to do if CRTC is not going to be enabled. */
+	if (!crtc->state->active)
+		return;
 
 	/*
 	 * Flush CRTC changes with go bit only if new modeset is not
@@ -271,7 +276,7 @@ static void tidss_crtc_atomic_disable(struct drm_crtc *crtc,
 	 * another videoport, the DSS will report sync lost issues. Disable all
 	 * the layers here as a work-around.
 	 */
-	for (u32 layer = 0; layer < tidss->feat->num_vids; layer++)
+	for (u32 layer = 0; layer < tidss->feat->num_planes; layer++)
 		dispc_ovr_enable_layer(tidss->dispc, tcrtc->hw_videoport, layer,
 				       false);
 

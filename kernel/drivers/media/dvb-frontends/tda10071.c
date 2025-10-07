@@ -838,12 +838,8 @@ static int tda10071_init(struct dvb_frontend *fe)
 
 		/* request the firmware, this will block and timeout */
 		ret = request_firmware(&fw, fw_file, &client->dev);
-		if (ret) {
-			dev_err(&client->dev,
-				"did not find the firmware file '%s' (status %d). You can use <kernel_dir>/scripts/get_dvb_firmware to get the firmware\n",
-				fw_file, ret);
+		if (ret)
 			goto error;
-		}
 
 		/* init */
 		for (i = 0; i < ARRAY_SIZE(tab2); i++) {
@@ -1145,7 +1141,8 @@ static struct dvb_frontend *tda10071_get_dvb_frontend(struct i2c_client *client)
 	return &dev->fe;
 }
 
-static int tda10071_probe(struct i2c_client *client)
+static int tda10071_probe(struct i2c_client *client,
+			const struct i2c_device_id *id)
 {
 	struct tda10071_dev *dev;
 	struct tda10071_platform_data *pdata = client->dev.platform_data;
@@ -1230,7 +1227,7 @@ static void tda10071_remove(struct i2c_client *client)
 }
 
 static const struct i2c_device_id tda10071_id_table[] = {
-	{ "tda10071_cx24118" },
+	{"tda10071_cx24118", 0},
 	{}
 };
 MODULE_DEVICE_TABLE(i2c, tda10071_id_table);

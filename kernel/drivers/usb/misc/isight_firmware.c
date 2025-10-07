@@ -45,7 +45,6 @@ static int isight_firmware_load(struct usb_interface *intf,
 		return -ENOMEM;
 
 	if (request_firmware(&firmware, "isight.fw", &dev->dev) != 0) {
-		printk(KERN_ERR "Unable to load isight firmware\n");
 		ret = -ENODEV;
 		goto out;
 	}
@@ -127,6 +126,5 @@ static struct usb_driver isight_firmware_driver = {
 
 module_usb_driver(isight_firmware_driver);
 
-MODULE_DESCRIPTION("iSight firmware loading support");
 MODULE_LICENSE("GPL");
 MODULE_AUTHOR("Matthew Garrett <mjg@redhat.com>");

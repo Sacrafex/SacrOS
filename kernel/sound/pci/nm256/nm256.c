@@ -691,13 +691,25 @@ snd_nm256_playback_silence(struct snd_pcm_substream *substream,
 static int
 snd_nm256_playback_copy(struct snd_pcm_substream *substream,
 			int channel, unsigned long pos,
-			struct iov_iter *src, unsigned long count)
+			void __user *src, unsigned long count)
 {
 	struct snd_pcm_runtime *runtime = substream->runtime;
 	struct nm256_stream *s = runtime->private_data;
 
-	if (copy_from_iter_toio(s->bufptr + pos, count, src) != count)
+	if (copy_from_user_toio(s->bufptr + pos, src, count))
 		return -EFAULT;
+	return 0;
+}
+
+static int
+snd_nm256_playback_copy_kernel(struct snd_pcm_substream *substream,
+			       int channel, unsigned long pos,
+			       void *src, unsigned long count)
+{
+	struct snd_pcm_runtime *runtime = substream->runtime;
+	struct nm256_stream *s = runtime->private_data;
+
+	memcpy_toio(s->bufptr + pos, src, count);
 	return 0;
 }
 
@@ -707,13 +719,25 @@ snd_nm256_playback_copy(struct snd_pcm_substream *substream,
 static int
 snd_nm256_capture_copy(struct snd_pcm_substream *substream,
 		       int channel, unsigned long pos,
-		       struct iov_iter *dst, unsigned long count)
+		       void __user *dst, unsigned long count)
 {
 	struct snd_pcm_runtime *runtime = substream->runtime;
 	struct nm256_stream *s = runtime->private_data;
 
-	if (copy_to_iter_fromio(s->bufptr + pos, count, dst) != count)
+	if (copy_to_user_fromio(dst, s->bufptr + pos, count))
 		return -EFAULT;
+	return 0;
+}
+
+static int
+snd_nm256_capture_copy_kernel(struct snd_pcm_substream *substream,
+			      int channel, unsigned long pos,
+			      void *dst, unsigned long count)
+{
+	struct snd_pcm_runtime *runtime = substream->runtime;
+	struct nm256_stream *s = runtime->private_data;
+
+	memcpy_fromio(dst, s->bufptr + pos, count);
 	return 0;
 }
 
@@ -885,7 +909,8 @@ static const struct snd_pcm_ops snd_nm256_playback_ops = {
 	.trigger =	snd_nm256_playback_trigger,
 	.pointer =	snd_nm256_playback_pointer,
 #ifndef __i386__
-	.copy =		snd_nm256_playback_copy,
+	.copy_user =	snd_nm256_playback_copy,
+	.copy_kernel =	snd_nm256_playback_copy_kernel,
 	.fill_silence =	snd_nm256_playback_silence,
 #endif
 	.mmap =		snd_pcm_lib_mmap_iomem,
@@ -899,7 +924,8 @@ static const struct snd_pcm_ops snd_nm256_capture_ops = {
 	.trigger =	snd_nm256_capture_trigger,
 	.pointer =	snd_nm256_capture_pointer,
 #ifndef __i386__
-	.copy =		snd_nm256_capture_copy,
+	.copy_user =	snd_nm256_capture_copy,
+	.copy_kernel =	snd_nm256_capture_copy_kernel,
 #endif
 	.mmap =		snd_pcm_lib_mmap_iomem,
 };
@@ -1360,6 +1386,7 @@ snd_nm256_peek_for_sig(struct nm256 *chip)
 	return 0;
 }
 
+#ifdef CONFIG_PM_SLEEP
 /*
  * APM event handler, so the card is properly reinitialized after a power
  * event.
@@ -1403,7 +1430,11 @@ static int nm256_resume(struct device *dev)
 	return 0;
 }
 
-static DEFINE_SIMPLE_DEV_PM_OPS(nm256_pm, nm256_suspend, nm256_resume);
+static SIMPLE_DEV_PM_OPS(nm256_pm, nm256_suspend, nm256_resume);
+#define NM256_PM_OPS	&nm256_pm
+#else
+#define NM256_PM_OPS	NULL
+#endif /* CONFIG_PM_SLEEP */
 
 static void snd_nm256_free(struct snd_card *card)
 {
@@ -1447,7 +1478,7 @@ snd_nm256_create(struct snd_card *card, struct pci_dev *pci)
 	chip->buffer_addr = pci_resource_start(pci, 0);
 	chip->cport_addr = pci_resource_start(pci, 1);
 
-	err = pcim_request_all_regions(pci, card->driver);
+	err = pci_request_regions(pci, card->driver);
 	if (err < 0)
 		return err;
 
@@ -1595,13 +1626,13 @@ static int snd_nm256_probe(struct pci_dev *pci,
 
 	switch (pci->device) {
 	case PCI_DEVICE_ID_NEOMAGIC_NM256AV_AUDIO:
-		strscpy(card->driver, "NM256AV");
+		strcpy(card->driver, "NM256AV");
 		break;
 	case PCI_DEVICE_ID_NEOMAGIC_NM256ZX_AUDIO:
-		strscpy(card->driver, "NM256ZX");
+		strcpy(card->driver, "NM256ZX");
 		break;
 	case PCI_DEVICE_ID_NEOMAGIC_NM256XL_PLUS_AUDIO:
-		strscpy(card->driver, "NM256XL+");
+		strcpy(card->driver, "NM256XL+");
 		break;
 	default:
 		dev_err(&pci->dev, "invalid device id 0x%x\n", pci->device);
@@ -1659,7 +1690,7 @@ static struct pci_driver nm256_driver = {
 	.id_table = snd_nm256_ids,
 	.probe = snd_nm256_probe,
 	.driver = {
-		.pm = &nm256_pm,
+		.pm = NM256_PM_OPS,
 	},
 };
 

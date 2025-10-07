@@ -161,7 +161,9 @@ __be16 eth_type_trans(struct sk_buff *skb, struct net_device *dev)
 	skb->dev = dev;
 	skb_reset_mac_header(skb);
 
-	eth = eth_skb_pull_mac(skb);
+	eth = (struct ethhdr *)skb->data;
+	skb_pull_inline(skb, ETH_HLEN);
+
 	eth_skb_pkt_type(skb, dev);
 
 	/*
@@ -386,7 +388,7 @@ EXPORT_SYMBOL(alloc_etherdev_mqs);
 
 ssize_t sysfs_format_mac(char *buf, const unsigned char *addr, int len)
 {
-	return sysfs_emit(buf, "%*phC\n", len, addr);
+	return scnprintf(buf, PAGE_SIZE, "%*phC\n", len, addr);
 }
 EXPORT_SYMBOL(sysfs_format_mac);
 

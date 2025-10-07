@@ -730,10 +730,9 @@ static int usbtv_queue_setup(struct vb2_queue *vq,
 {
 	struct usbtv *usbtv = vb2_get_drv_priv(vq);
 	unsigned size = USBTV_CHUNK * usbtv->n_chunks * 2 * sizeof(u32);
-	unsigned int q_num_bufs = vb2_get_num_buffers(vq);
 
-	if (q_num_bufs + *nbuffers < 2)
-		*nbuffers = 2 - q_num_bufs;
+	if (vq->num_buffers + *nbuffers < 2)
+		*nbuffers = 2 - vq->num_buffers;
 	if (*nplanes)
 		return sizes[0] < size ? -EINVAL : 0;
 	*nplanes = 1;
@@ -784,6 +783,8 @@ static const struct vb2_ops usbtv_vb2_ops = {
 	.buf_queue = usbtv_buf_queue,
 	.start_streaming = usbtv_start_streaming,
 	.stop_streaming = usbtv_stop_streaming,
+	.wait_prepare = vb2_ops_wait_prepare,
+	.wait_finish = vb2_ops_wait_finish,
 };
 
 static int usbtv_s_ctrl(struct v4l2_ctrl *ctrl)

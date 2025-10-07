@@ -208,6 +208,9 @@ static const struct {
 };
 #define UART_INFO_NUM	ARRAY_SIZE(Gpci_uart_info)
 
+
+/* driver_data correspond to the lines in the structure above
+   see also ISA probe function before you change something */
 static const struct pci_device_id mxser_pcibrds[] = {
 	{ PCI_DEVICE_DATA(MOXA, C168,		8) },
 	{ PCI_DEVICE_DATA(MOXA, C104,		4) },
@@ -261,7 +264,7 @@ struct mxser_port {
 	u8 rx_low_water;
 	int type;		/* UART type */
 
-	u8 x_char;		/* xon/xoff character */
+	unsigned char x_char;	/* xon/xoff character */
 	u8 IER;			/* Interrupt Enable Register */
 	u8 MCR;			/* Modem control register */
 	u8 FCR;			/* FIFO control register */
@@ -285,7 +288,7 @@ struct mxser_board {
 	enum mxser_must_hwid must_hwid;
 	speed_t max_baud;
 
-	struct mxser_port ports[] /* __counted_by(nports) */;
+	struct mxser_port ports[];
 };
 
 static DECLARE_BITMAP(mxser_boards, MXSER_BOARDS);
@@ -455,14 +458,13 @@ static void __mxser_stop_tx(struct mxser_port *info)
 	outb(info->IER, info->ioaddr + UART_IER);
 }
 
-static bool mxser_carrier_raised(struct tty_port *port)
+static int mxser_carrier_raised(struct tty_port *port)
 {
 	struct mxser_port *mp = container_of(port, struct mxser_port, port);
-
-	return inb(mp->ioaddr + UART_MSR) & UART_MSR_DCD;
+	return (inb(mp->ioaddr + UART_MSR) & UART_MSR_DCD)?1:0;
 }
 
-static void mxser_dtr_rts(struct tty_port *port, bool active)
+static void mxser_dtr_rts(struct tty_port *port, int on)
 {
 	struct mxser_port *mp = container_of(port, struct mxser_port, port);
 	unsigned long flags;
@@ -470,7 +472,7 @@ static void mxser_dtr_rts(struct tty_port *port, bool active)
 
 	spin_lock_irqsave(&mp->slock, flags);
 	mcr = inb(mp->ioaddr + UART_MCR);
-	if (active)
+	if (on)
 		mcr |= UART_MCR_DTR | UART_MCR_RTS;
 	else
 		mcr &= ~(UART_MCR_DTR | UART_MCR_RTS);
@@ -550,7 +552,7 @@ static void mxser_handle_cts(struct tty_struct *tty, struct mxser_port *info,
 
 	if (tty->hw_stopped) {
 		if (cts) {
-			tty->hw_stopped = false;
+			tty->hw_stopped = 0;
 
 			if (!mxser_16550A_or_MUST(info))
 				__mxser_start_tx(info);
@@ -560,7 +562,7 @@ static void mxser_handle_cts(struct tty_struct *tty, struct mxser_port *info,
 	} else if (cts)
 		return;
 
-	tty->hw_stopped = true;
+	tty->hw_stopped = 1;
 	if (!mxser_16550A_or_MUST(info))
 		__mxser_stop_tx(info);
 }
@@ -898,11 +900,11 @@ static void mxser_close(struct tty_struct *tty, struct file *filp)
 	tty_port_close(tty->port, tty, filp);
 }
 
-static ssize_t mxser_write(struct tty_struct *tty, const u8 *buf, size_t count)
+static int mxser_write(struct tty_struct *tty, const unsigned char *buf, int count)
 {
 	struct mxser_port *info = tty->driver_data;
 	unsigned long flags;
-	size_t written;
+	int written;
 	bool is_empty;
 
 	spin_lock_irqsave(&info->slock, flags);
@@ -917,7 +919,7 @@ static ssize_t mxser_write(struct tty_struct *tty, const u8 *buf, size_t count)
 	return written;
 }
 
-static int mxser_put_char(struct tty_struct *tty, u8 ch)
+static int mxser_put_char(struct tty_struct *tty, unsigned char ch)
 {
 	struct mxser_port *info = tty->driver_data;
 	unsigned long flags;
@@ -983,7 +985,7 @@ static int mxser_get_serial_info(struct tty_struct *tty,
 	ss->baud_base = MXSER_BAUD_BASE;
 	ss->close_delay = close_delay;
 	ss->closing_wait = closing_wait;
-	ss->custom_divisor = MXSER_CUSTOM_DIVISOR;
+	ss->custom_divisor = MXSER_CUSTOM_DIVISOR,
 	mutex_unlock(&port->mutex);
 	return 0;
 }
@@ -1061,7 +1063,7 @@ static int mxser_set_serial_info(struct tty_struct *tty,
 	} else {
 		retval = mxser_activate(port, tty);
 		if (retval == 0)
-			tty_port_set_initialized(port, true);
+			tty_port_set_initialized(port, 1);
 	}
 	mutex_unlock(&port->mutex);
 	return retval;
@@ -1358,7 +1360,7 @@ static void mxser_set_termios(struct tty_struct *tty,
 	spin_unlock_irqrestore(&info->slock, flags);
 
 	if ((old_termios->c_cflag & CRTSCTS) && !C_CRTSCTS(tty)) {
-		tty->hw_stopped = false;
+		tty->hw_stopped = 0;
 		mxser_start(tty);
 	}
 
@@ -1518,7 +1520,7 @@ static u8 mxser_receive_chars_old(struct tty_struct *tty,
 			if (++ignored > 100)
 				break;
 		} else {
-			u8 flag = 0;
+			char flag = 0;
 			if (status & UART_LSR_BRK_ERROR_BITS) {
 				if (status & UART_LSR_BI) {
 					flag = TTY_BREAK;
@@ -1582,7 +1584,7 @@ static void mxser_transmit_chars(struct tty_struct *tty, struct mxser_port *port
 
 	count = port->xmit_fifo_size;
 	do {
-		u8 c;
+		unsigned char c;
 
 		if (!kfifo_get(&port->port.xmit_fifo, &c))
 			break;
@@ -1770,6 +1772,8 @@ static void mxser_initbrd(struct mxser_board *brd, bool high_baud)
 
 		mxser_process_txrx_fifo(info);
 
+		info->port.close_delay = 5 * HZ / 10;
+		info->port.closing_wait = 30 * HZ;
 		spin_lock_init(&info->slock);
 
 		/* before set INT ISR, disable all int */
@@ -1812,7 +1816,7 @@ static int mxser_probe(struct pci_dev *pdev,
 
 	/* io address */
 	ioaddress = pci_resource_start(pdev, 2);
-	retval = pcim_request_region(pdev, 2, "mxser(IO)");
+	retval = pci_request_region(pdev, 2, "mxser(IO)");
 	if (retval)
 		goto err_zero;
 
@@ -1822,7 +1826,7 @@ static int mxser_probe(struct pci_dev *pdev,
 
 	/* vector */
 	ioaddress = pci_resource_start(pdev, 3);
-	retval = pcim_request_region(pdev, 3, "mxser(vector)");
+	retval = pci_request_region(pdev, 3, "mxser(vector)");
 	if (retval)
 		goto err_zero;
 	brd->vector = ioaddress;

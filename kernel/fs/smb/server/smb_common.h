@@ -72,8 +72,6 @@
 #define FILE_SUPPORTS_ENCRYPTION	0x00020000
 #define FILE_SUPPORTS_OBJECT_IDS	0x00010000
 #define FILE_VOLUME_IS_COMPRESSED	0x00008000
-#define FILE_SUPPORTS_POSIX_UNLINK_RENAME 0x00000400
-#define FILE_RETURNS_CLEANUP_RESULT_INFO  0x00000200
 #define FILE_SUPPORTS_REMOTE_STORAGE	0x00000100
 #define FILE_SUPPORTS_REPARSE_POINTS	0x00000080
 #define FILE_SUPPORTS_SPARSE_FILES	0x00000040
@@ -215,7 +213,7 @@ struct filesystem_attribute_info {
 	__le32 Attributes;
 	__le32 MaxPathNameComponentLength;
 	__le32 FileSystemNameLen;
-	__le16 FileSystemName[]; /* do not have to save this - get subset? */
+	__le16 FileSystemName[1]; /* do not have to save this - get subset? */
 } __packed;
 
 struct filesystem_device_info {
@@ -228,7 +226,7 @@ struct filesystem_vol_info {
 	__le32 SerialNumber;
 	__le32 VolumeLabelSize;
 	__le16 Reserved;
-	__le16 VolumeLabel[];
+	__le16 VolumeLabel[1];
 } __packed;
 
 struct filesystem_info {
@@ -429,7 +427,7 @@ bool ksmbd_smb_request(struct ksmbd_conn *conn);
 
 int ksmbd_lookup_dialect_by_id(__le16 *cli_dialects, __le16 dialects_count);
 
-int ksmbd_init_smb_server(struct ksmbd_conn *conn);
+int ksmbd_init_smb_server(struct ksmbd_work *work);
 
 struct ksmbd_kstat;
 int ksmbd_populate_dot_dotdot_entries(struct ksmbd_work *work,

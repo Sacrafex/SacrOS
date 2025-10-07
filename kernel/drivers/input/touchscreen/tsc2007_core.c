@@ -142,7 +142,8 @@ static irqreturn_t tsc2007_soft_irq(int irq, void *handle)
 			rt = ts->max_rt - rt;
 
 			input_report_key(input, BTN_TOUCH, 1);
-			touchscreen_report_pos(input, &ts->prop, tc.x, tc.y, false);
+			input_report_abs(input, ABS_X, tc.x);
+			input_report_abs(input, ABS_Y, tc.y);
 			input_report_abs(input, ABS_PRESSURE, rt);
 
 			input_sync(input);
@@ -164,6 +165,19 @@ static irqreturn_t tsc2007_soft_irq(int irq, void *handle)
 	input_report_key(input, BTN_TOUCH, 0);
 	input_report_abs(input, ABS_PRESSURE, 0);
 	input_sync(input);
+
+	if (ts->clear_penirq)
+		ts->clear_penirq();
+
+	return IRQ_HANDLED;
+}
+
+static irqreturn_t tsc2007_hard_irq(int irq, void *handle)
+{
+	struct tsc2007 *ts = handle;
+
+	if (tsc2007_is_pen_down(ts))
+		return IRQ_WAKE_THREAD;
 
 	if (ts->clear_penirq)
 		ts->clear_penirq();
@@ -212,7 +226,7 @@ static int tsc2007_get_pendown_state_gpio(struct device *dev)
 	struct i2c_client *client = to_i2c_client(dev);
 	struct tsc2007 *ts = i2c_get_clientdata(client);
 
-	return gpiod_get_value_cansleep(ts->gpiod);
+	return gpiod_get_value(ts->gpiod);
 }
 
 static int tsc2007_probe_properties(struct device *dev, struct tsc2007 *ts)
@@ -288,9 +302,9 @@ static void tsc2007_call_exit_platform_hw(void *data)
 	pdata->exit_platform_hw();
 }
 
-static int tsc2007_probe(struct i2c_client *client)
+static int tsc2007_probe(struct i2c_client *client,
+			 const struct i2c_device_id *id)
 {
-	const struct i2c_device_id *id = i2c_client_get_device_id(client);
 	const struct tsc2007_platform_data *pdata =
 		dev_get_platdata(&client->dev);
 	struct tsc2007 *ts;
@@ -338,9 +352,9 @@ static int tsc2007_probe(struct i2c_client *client)
 	input_set_drvdata(input_dev, ts);
 
 	input_set_capability(input_dev, EV_KEY, BTN_TOUCH);
+
 	input_set_abs_params(input_dev, ABS_X, 0, MAX_12BIT, ts->fuzzx, 0);
 	input_set_abs_params(input_dev, ABS_Y, 0, MAX_12BIT, ts->fuzzy, 0);
-	touchscreen_parse_properties(input_dev, false, &ts->prop);
 	input_set_abs_params(input_dev, ABS_PRESSURE, 0, MAX_12BIT,
 			     ts->fuzzz, 0);
 
@@ -362,7 +376,7 @@ static int tsc2007_probe(struct i2c_client *client)
 	}
 
 	err = devm_request_threaded_irq(&client->dev, ts->irq,
-					NULL, tsc2007_soft_irq,
+					tsc2007_hard_irq, tsc2007_soft_irq,
 					IRQF_ONESHOT,
 					client->dev.driver->name, ts);
 	if (err) {
@@ -399,7 +413,7 @@ static int tsc2007_probe(struct i2c_client *client)
 }
 
 static const struct i2c_device_id tsc2007_idtable[] = {
-	{ "tsc2007" },
+	{ "tsc2007", 0 },
 	{ }
 };
 

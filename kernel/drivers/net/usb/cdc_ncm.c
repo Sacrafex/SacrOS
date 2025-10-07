@@ -43,7 +43,6 @@
 #include <linux/ctype.h>
 #include <linux/etherdevice.h>
 #include <linux/ethtool.h>
-#include <linux/kstrtox.h>
 #include <linux/workqueue.h>
 #include <linux/mii.h>
 #include <linux/crc32.h>
@@ -54,11 +53,7 @@
 #include <linux/usb/cdc.h>
 #include <linux/usb/cdc_ncm.h>
 
-#if IS_ENABLED(CONFIG_USB_NET_CDC_MBIM)
-static bool prefer_mbim = true;
-#else
 static bool prefer_mbim;
-#endif
 module_param(prefer_mbim, bool, 0644);
 MODULE_PARM_DESC(prefer_mbim, "Prefer MBIM setting on dual NCM/MBIM functions");
 
@@ -322,7 +317,7 @@ static ssize_t ndp_to_end_store(struct device *d,  struct device_attribute *attr
 	struct cdc_ncm_ctx *ctx = (struct cdc_ncm_ctx *)dev->data[0];
 	bool enable;
 
-	if (kstrtobool(buf, &enable))
+	if (strtobool(buf, &enable))
 		return -EINVAL;
 
 	/* no change? */
@@ -798,7 +793,7 @@ int cdc_ncm_change_mtu(struct net_device *net, int new_mtu)
 {
 	struct usbnet *dev = netdev_priv(net);
 
-	WRITE_ONCE(net->mtu, new_mtu);
+	net->mtu = new_mtu;
 	cdc_ncm_set_dgram_size(dev, new_mtu + cdc_ncm_eth_hlen(dev));
 
 	return 0;
@@ -833,7 +828,8 @@ int cdc_ncm_bind_common(struct usbnet *dev, struct usb_interface *intf, u8 data_
 
 	ctx->dev = dev;
 
-	hrtimer_setup(&ctx->tx_timer, &cdc_ncm_tx_timer_cb, CLOCK_MONOTONIC, HRTIMER_MODE_REL);
+	hrtimer_init(&ctx->tx_timer, CLOCK_MONOTONIC, HRTIMER_MODE_REL);
+	ctx->tx_timer.function = &cdc_ncm_tx_timer_cb;
 	tasklet_setup(&ctx->bh, cdc_ncm_txpath_bh);
 	atomic_set(&ctx->stop, 0);
 	spin_lock_init(&ctx->mtx);
@@ -936,8 +932,7 @@ int cdc_ncm_bind_common(struct usbnet *dev, struct usb_interface *intf, u8 data_
 
 	cdc_ncm_find_endpoints(dev, ctx->data);
 	cdc_ncm_find_endpoints(dev, ctx->control);
-	if (!dev->in || !dev->out ||
-	    (!dev->status && dev->driver_info->flags & FLAG_LINK_INTR)) {
+	if (!dev->in || !dev->out || !dev->status) {
 		dev_dbg(&intf->dev, "failed to collect endpoints\n");
 		goto error2;
 	}
@@ -1937,34 +1932,6 @@ static const struct driver_info cdc_ncm_zlp_info = {
 	.set_rx_mode = cdc_ncm_update_filter,
 };
 
-/* Same as cdc_ncm_info, but with FLAG_SEND_ZLP */
-static const struct driver_info apple_tethering_interface_info = {
-	.description = "CDC NCM (Apple Tethering)",
-	.flags = FLAG_POINTTOPOINT | FLAG_NO_SETINT | FLAG_MULTI_PACKET
-			| FLAG_LINK_INTR | FLAG_ETHER | FLAG_SEND_ZLP,
-	.bind = cdc_ncm_bind,
-	.unbind = cdc_ncm_unbind,
-	.manage_power = usbnet_manage_power,
-	.status = cdc_ncm_status,
-	.rx_fixup = cdc_ncm_rx_fixup,
-	.tx_fixup = cdc_ncm_tx_fixup,
-	.set_rx_mode = usbnet_cdc_update_filter,
-};
-
-/* Same as apple_tethering_interface_info, but without FLAG_LINK_INTR */
-static const struct driver_info apple_private_interface_info = {
-	.description = "CDC NCM (Apple Private)",
-	.flags = FLAG_POINTTOPOINT | FLAG_NO_SETINT | FLAG_MULTI_PACKET
-			| FLAG_ETHER | FLAG_SEND_ZLP,
-	.bind = cdc_ncm_bind,
-	.unbind = cdc_ncm_unbind,
-	.manage_power = usbnet_manage_power,
-	.status = cdc_ncm_status,
-	.rx_fixup = cdc_ncm_rx_fixup,
-	.tx_fixup = cdc_ncm_tx_fixup,
-	.set_rx_mode = usbnet_cdc_update_filter,
-};
-
 /* Same as cdc_ncm_info, but with FLAG_WWAN */
 static const struct driver_info wwan_info = {
 	.description = "Mobile Broadband Network Device",
@@ -1994,22 +1961,6 @@ static const struct driver_info wwan_noarp_info = {
 };
 
 static const struct usb_device_id cdc_devs[] = {
-	/* iPhone */
-	{ USB_DEVICE_INTERFACE_NUMBER(0x05ac, 0x12a8, 2),
-		.driver_info = (unsigned long)&apple_tethering_interface_info,
-	},
-	{ USB_DEVICE_INTERFACE_NUMBER(0x05ac, 0x12a8, 4),
-		.driver_info = (unsigned long)&apple_private_interface_info,
-	},
-
-	/* iPad */
-	{ USB_DEVICE_INTERFACE_NUMBER(0x05ac, 0x12ab, 2),
-		.driver_info = (unsigned long)&apple_tethering_interface_info,
-	},
-	{ USB_DEVICE_INTERFACE_NUMBER(0x05ac, 0x12ab, 4),
-		.driver_info = (unsigned long)&apple_private_interface_info,
-	},
-
 	/* Ericsson MBM devices like F5521gw */
 	{ .match_flags = USB_DEVICE_ID_MATCH_INT_INFO
 		| USB_DEVICE_ID_MATCH_VENDOR,

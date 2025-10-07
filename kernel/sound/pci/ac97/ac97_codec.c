@@ -152,6 +152,7 @@ static const struct ac97_codec_id snd_ac97_codec_ids[] = {
 { 0x4e534300, 0xffffffff, "LM4540,43,45,46,48",	NULL,		NULL }, // only guess --jk
 { 0x4e534331, 0xffffffff, "LM4549",		NULL,		NULL },
 { 0x4e534350, 0xffffffff, "LM4550",		patch_lm4550,  	NULL }, // volume wrap fix 
+{ 0x50534304, 0xffffffff, "UCB1400",		patch_ucb1400,	NULL },
 { 0x53494c20, 0xffffffe0, "Si3036,8",		mpatch_si3036,	mpatch_si3036, AC97_MODEM_PATCH },
 { 0x53544d02, 0xffffffff, "ST7597",		NULL,		NULL },
 { 0x54524102, 0xffffffff, "TR28022",		NULL,		NULL },
@@ -1840,8 +1841,7 @@ static const struct ac97_codec_id *look_for_codec_id(const struct ac97_codec_id 
 	return NULL;
 }
 
-void snd_ac97_get_name(struct snd_ac97 *ac97, unsigned int id, char *name,
-		       size_t maxlen, int modem)
+void snd_ac97_get_name(struct snd_ac97 *ac97, unsigned int id, char *name, int modem)
 {
 	const struct ac97_codec_id *pid;
 
@@ -1853,7 +1853,7 @@ void snd_ac97_get_name(struct snd_ac97 *ac97, unsigned int id, char *name,
 	if (! pid)
 		return;
 
-	strscpy(name, pid->name, maxlen);
+	strcpy(name, pid->name);
 	if (ac97 && pid->patch) {
 		if ((modem && (pid->flags & AC97_MODEM_PATCH)) ||
 		    (! modem && ! (pid->flags & AC97_MODEM_PATCH)))
@@ -1862,19 +1862,17 @@ void snd_ac97_get_name(struct snd_ac97 *ac97, unsigned int id, char *name,
 
 	pid = look_for_codec_id(snd_ac97_codec_ids, id);
 	if (pid) {
-		strlcat(name, " ", maxlen);
-		strlcat(name, pid->name, maxlen);
+		strcat(name, " ");
+		strcat(name, pid->name);
 		if (pid->mask != 0xffffffff)
-			sprintf(name + strlen(name), " rev %u", id & ~pid->mask);
+			sprintf(name + strlen(name), " rev %d", id & ~pid->mask);
 		if (ac97 && pid->patch) {
 			if ((modem && (pid->flags & AC97_MODEM_PATCH)) ||
 			    (! modem && ! (pid->flags & AC97_MODEM_PATCH)))
 				pid->patch(ac97);
 		}
-	} else {
-		int l = strlen(name);
-		snprintf(name + l, maxlen - l, " id %x", id & 0xff);
-	}
+	} else
+		sprintf(name + strlen(name), " id %x", id & 0xff);
 }
 
 /**
@@ -2298,15 +2296,15 @@ int snd_ac97_mixer(struct snd_ac97_bus *bus, struct snd_ac97_template *template,
 	/* additional initializations */
 	if (bus->ops->init)
 		bus->ops->init(ac97);
-	snd_ac97_get_name(ac97, ac97->id, name, sizeof(name), !ac97_is_audio(ac97));
-	snd_ac97_get_name(NULL, ac97->id, name, sizeof(name), !ac97_is_audio(ac97));  // ac97->id might be changed in the special setup code
+	snd_ac97_get_name(ac97, ac97->id, name, !ac97_is_audio(ac97));
+	snd_ac97_get_name(NULL, ac97->id, name, !ac97_is_audio(ac97));  // ac97->id might be changed in the special setup code
 	if (! ac97->build_ops)
 		ac97->build_ops = &null_build_ops;
 
 	if (ac97_is_audio(ac97)) {
 		char comp[16];
 		if (card->mixername[0] == '\0') {
-			strscpy(card->mixername, name);
+			strcpy(card->mixername, name);
 		} else {
 			if (strlen(card->mixername) + 1 + strlen(name) + 1 <= sizeof(card->mixername)) {
 				strcat(card->mixername, ",");
@@ -2327,7 +2325,7 @@ int snd_ac97_mixer(struct snd_ac97_bus *bus, struct snd_ac97_template *template,
 	if (ac97_is_modem(ac97)) {
 		char comp[16];
 		if (card->mixername[0] == '\0') {
-			strscpy(card->mixername, name);
+			strcpy(card->mixername, name);
 		} else {
 			if (strlen(card->mixername) + 1 + strlen(name) + 1 <= sizeof(card->mixername)) {
 				strcat(card->mixername, ",");
@@ -2464,7 +2462,8 @@ int snd_ac97_update_power(struct snd_ac97 *ac97, int reg, int powerup)
 		 * (for avoiding loud click noises for many (OSS) apps
 		 *  that open/close frequently)
 		 */
-		schedule_delayed_work(&ac97->power_work, secs_to_jiffies(power_save));
+		schedule_delayed_work(&ac97->power_work,
+				      msecs_to_jiffies(power_save * 1000));
 	else {
 		cancel_delayed_work(&ac97->power_work);
 		update_power_regs(ac97);

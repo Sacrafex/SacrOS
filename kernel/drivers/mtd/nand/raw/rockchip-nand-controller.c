@@ -15,6 +15,7 @@
 #include <linux/mtd/mtd.h>
 #include <linux/mtd/rawnand.h>
 #include <linux/of.h>
+#include <linux/of_device.h>
 #include <linux/platform_device.h>
 #include <linux/slab.h>
 
@@ -98,7 +99,7 @@ enum nfc_type {
  * @high: ECC count high bit index at register.
  * @high_mask: mask bit
  */
-struct rk_ecc_cnt_status {
+struct ecc_cnt_status {
 	u8 err_flag_bit;
 	u8 low;
 	u8 low_mask;
@@ -108,7 +109,6 @@ struct rk_ecc_cnt_status {
 };
 
 /**
- * struct nfc_cfg: Rockchip NAND controller configuration
  * @type: NFC version
  * @ecc_strengths: ECC strengths
  * @ecc_cfgs: ECC config values
@@ -145,8 +145,8 @@ struct nfc_cfg {
 	u32 int_st_off;
 	u32 oob0_off;
 	u32 oob1_off;
-	struct rk_ecc_cnt_status ecc0;
-	struct rk_ecc_cnt_status ecc1;
+	struct ecc_cnt_status ecc0;
+	struct ecc_cnt_status ecc1;
 };
 
 struct rk_nfc_nand_chip {
@@ -159,7 +159,8 @@ struct rk_nfc_nand_chip {
 	u32 timing;
 
 	u8 nsels;
-	u8 sels[] __counted_by(nsels);
+	u8 sels[];
+	/* Nothing after this field. */
 };
 
 struct rk_nfc {
@@ -1134,7 +1135,7 @@ static int rk_nfc_nand_chip_init(struct device *dev, struct rk_nfc *nfc,
 		return -EINVAL;
 	}
 
-	rknand = devm_kzalloc(dev, struct_size(rknand, sels, nsels),
+	rknand = devm_kzalloc(dev, sizeof(*rknand) + nsels * sizeof(u8),
 			      GFP_KERNEL);
 	if (!rknand)
 		return -ENOMEM;
@@ -1226,7 +1227,7 @@ static void rk_nfc_chips_cleanup(struct rk_nfc *nfc)
 
 static int rk_nfc_nand_chips_init(struct device *dev, struct rk_nfc *nfc)
 {
-	struct device_node *np = dev->of_node;
+	struct device_node *np = dev->of_node, *nand_np;
 	int nchips = of_get_child_count(np);
 	int ret;
 
@@ -1236,9 +1237,10 @@ static int rk_nfc_nand_chips_init(struct device *dev, struct rk_nfc *nfc)
 		return -EINVAL;
 	}
 
-	for_each_child_of_node_scoped(np, nand_np) {
+	for_each_child_of_node(np, nand_np) {
 		ret = rk_nfc_nand_chip_init(dev, nfc, nand_np);
 		if (ret) {
+			of_node_put(nand_np);
 			rk_nfc_chips_cleanup(nfc);
 			return ret;
 		}
@@ -1445,7 +1447,7 @@ release_nfc:
 	return ret;
 }
 
-static void rk_nfc_remove(struct platform_device *pdev)
+static int rk_nfc_remove(struct platform_device *pdev)
 {
 	struct rk_nfc *nfc = platform_get_drvdata(pdev);
 
@@ -1453,6 +1455,8 @@ static void rk_nfc_remove(struct platform_device *pdev)
 	kfree(nfc->oob_buf);
 	rk_nfc_chips_cleanup(nfc);
 	rk_nfc_disable_clks(nfc);
+
+	return 0;
 }
 
 static int __maybe_unused rk_nfc_suspend(struct device *dev)

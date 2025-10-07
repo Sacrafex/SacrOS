@@ -167,7 +167,7 @@ static int tb10x_gpio_probe(struct platform_device *pdev)
 
 	platform_set_drvdata(pdev, tb10x_gpio);
 
-	if (of_property_read_bool(np, "interrupt-controller")) {
+	if (of_find_property(np, "interrupt-controller", NULL)) {
 		struct irq_chip_generic *gc;
 
 		ret = platform_get_irq(pdev, 0);
@@ -183,8 +183,9 @@ static int tb10x_gpio_probe(struct platform_device *pdev)
 		if (ret != 0)
 			return ret;
 
-		tb10x_gpio->domain = irq_domain_create_linear(dev_fwnode(dev), tb10x_gpio->gc.ngpio,
-							      &irq_generic_chip_ops, NULL);
+		tb10x_gpio->domain = irq_domain_add_linear(np,
+						tb10x_gpio->gc.ngpio,
+						&irq_generic_chip_ops, NULL);
 		if (!tb10x_gpio->domain) {
 			return -ENOMEM;
 		}
@@ -214,7 +215,7 @@ err_remove_domain:
 	return ret;
 }
 
-static void tb10x_gpio_remove(struct platform_device *pdev)
+static int tb10x_gpio_remove(struct platform_device *pdev)
 {
 	struct tb10x_gpio *tb10x_gpio = platform_get_drvdata(pdev);
 
@@ -224,6 +225,8 @@ static void tb10x_gpio_remove(struct platform_device *pdev)
 		kfree(tb10x_gpio->domain->gc);
 		irq_domain_remove(tb10x_gpio->domain);
 	}
+
+	return 0;
 }
 
 static const struct of_device_id tb10x_gpio_dt_ids[] = {

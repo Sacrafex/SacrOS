@@ -115,25 +115,26 @@ static bool pde_subdir_insert(struct proc_dir_entry *dir,
 	return true;
 }
 
-static int proc_notify_change(struct mnt_idmap *idmap,
+static int proc_notify_change(struct user_namespace *mnt_userns,
 			      struct dentry *dentry, struct iattr *iattr)
 {
 	struct inode *inode = d_inode(dentry);
 	struct proc_dir_entry *de = PDE(inode);
 	int error;
 
-	error = setattr_prepare(&nop_mnt_idmap, dentry, iattr);
+	error = setattr_prepare(&init_user_ns, dentry, iattr);
 	if (error)
 		return error;
 
-	setattr_copy(&nop_mnt_idmap, inode, iattr);
+	setattr_copy(&init_user_ns, inode, iattr);
+	mark_inode_dirty(inode);
 
 	proc_set_user(de, inode->i_uid, inode->i_gid);
 	de->mode = inode->i_mode;
 	return 0;
 }
 
-static int proc_getattr(struct mnt_idmap *idmap,
+static int proc_getattr(struct user_namespace *mnt_userns,
 			const struct path *path, struct kstat *stat,
 			u32 request_mask, unsigned int query_flags)
 {
@@ -146,7 +147,7 @@ static int proc_getattr(struct mnt_idmap *idmap,
 		}
 	}
 
-	generic_fillattr(&nop_mnt_idmap, request_mask, inode, stat);
+	generic_fillattr(&init_user_ns, inode, stat);
 	return 0;
 }
 
@@ -202,8 +203,8 @@ int proc_alloc_inum(unsigned int *inum)
 {
 	int i;
 
-	i = ida_alloc_max(&proc_inum_ida, UINT_MAX - PROC_DYNAMIC_FIRST,
-			  GFP_KERNEL);
+	i = ida_simple_get(&proc_inum_ida, 0, UINT_MAX - PROC_DYNAMIC_FIRST + 1,
+			   GFP_KERNEL);
 	if (i < 0)
 		return i;
 
@@ -213,11 +214,10 @@ int proc_alloc_inum(unsigned int *inum)
 
 void proc_free_inum(unsigned int inum)
 {
-	ida_free(&proc_inum_ida, inum - PROC_DYNAMIC_FIRST);
+	ida_simple_remove(&proc_inum_ida, inum - PROC_DYNAMIC_FIRST);
 }
 
-static int proc_misc_d_revalidate(struct inode *dir, const struct qstr *name,
-				  struct dentry *dentry, unsigned int flags)
+static int proc_misc_d_revalidate(struct dentry *dentry, unsigned int flags)
 {
 	if (flags & LOOKUP_RCU)
 		return -ECHILD;
@@ -254,11 +254,8 @@ struct dentry *proc_lookup_de(struct inode *dir, struct dentry *dentry,
 		inode = proc_get_inode(dir->i_sb, de);
 		if (!inode)
 			return ERR_PTR(-ENOMEM);
-		if (de->flags & PROC_ENTRY_FORCE_LOOKUP)
-			return d_splice_alias_ops(inode, dentry,
-						  &proc_net_dentry_ops);
-		return d_splice_alias_ops(inode, dentry,
-					  &proc_misc_dentry_ops);
+		d_set_d_op(dentry, de->proc_dops);
+		return d_splice_alias(inode, dentry);
 	}
 	read_unlock(&proc_subdir_lock);
 	return ERR_PTR(-ENOENT);
@@ -347,8 +344,7 @@ static const struct file_operations proc_dir_operations = {
 	.iterate_shared		= proc_readdir,
 };
 
-static int proc_net_d_revalidate(struct inode *dir, const struct qstr *name,
-				 struct dentry *dentry, unsigned int flags)
+static int proc_net_d_revalidate(struct dentry *dentry, unsigned int flags)
 {
 	return 0;
 }
@@ -473,8 +469,9 @@ static struct proc_dir_entry *__proc_create(struct proc_dir_entry **parent,
 	INIT_LIST_HEAD(&ent->pde_openers);
 	proc_set_user(ent, (*parent)->uid, (*parent)->gid);
 
+	ent->proc_dops = &proc_misc_dentry_ops;
 	/* Revalidate everything under /proc/${pid}/net */
-	if ((*parent)->flags & PROC_ENTRY_FORCE_LOOKUP)
+	if ((*parent)->proc_dops == &proc_net_dentry_ops)
 		pde_force_lookup(ent);
 
 out:
@@ -490,9 +487,9 @@ struct proc_dir_entry *proc_symlink(const char *name,
 			  (S_IFLNK | S_IRUGO | S_IWUGO | S_IXUGO),1);
 
 	if (ent) {
-		ent->size = strlen(dest);
-		ent->data = kmemdup(dest, ent->size + 1, GFP_KERNEL);
+		ent->data = kmalloc((ent->size=strlen(dest))+1, GFP_KERNEL);
 		if (ent->data) {
+			strcpy((char*)ent->data,dest);
 			ent->proc_iops = &proc_link_inode_operations;
 			ent = proc_register(parent, ent);
 		} else {

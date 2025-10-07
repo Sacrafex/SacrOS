@@ -23,7 +23,6 @@
 #include "fs_context.h"
 #include "cifs_ioctl.h"
 #include "fscache.h"
-#include "cached_dir.h"
 
 static void
 renew_parental_timestamps(struct dentry *direntry)
@@ -190,9 +189,7 @@ static int cifs_do_create(struct inode *inode, struct dentry *direntry, unsigned
 	int disposition;
 	struct TCP_Server_Info *server = tcon->ses->server;
 	struct cifs_open_parms oparms;
-	struct cached_fid *parent_cfid = NULL;
 	int rdwr_for_fscache = 0;
-	__le32 lease_flags = 0;
 
 	*oplock = 0;
 	if (tcon->ses->server->oplocks)
@@ -314,28 +311,7 @@ static int cifs_do_create(struct inode *inode, struct dentry *direntry, unsigned
 	if (!tcon->unix_ext && (mode & S_IWUGO) == 0)
 		create_options |= CREATE_OPTION_READONLY;
 
-
 retry_open:
-	if (tcon->cfids && direntry->d_parent && server->dialect >= SMB30_PROT_ID) {
-		parent_cfid = NULL;
-		spin_lock(&tcon->cfids->cfid_list_lock);
-		list_for_each_entry(parent_cfid, &tcon->cfids->entries, entry) {
-			if (parent_cfid->dentry == direntry->d_parent) {
-				cifs_dbg(FYI, "found a parent cached file handle\n");
-				if (parent_cfid->has_lease && parent_cfid->time) {
-					lease_flags
-						|= SMB2_LEASE_FLAG_PARENT_LEASE_KEY_SET_LE;
-					memcpy(fid->parent_lease_key,
-					       parent_cfid->fid.lease_key,
-					       SMB2_LEASE_KEY_SIZE);
-					parent_cfid->dirents.is_valid = false;
-				}
-				break;
-			}
-		}
-		spin_unlock(&tcon->cfids->cfid_list_lock);
-	}
-
 	oparms = (struct cifs_open_parms) {
 		.tcon = tcon,
 		.cifs_sb = cifs_sb,
@@ -344,7 +320,6 @@ retry_open:
 		.disposition = disposition,
 		.path = full_path,
 		.fid = fid,
-		.lease_flags = lease_flags,
 		.mode = mode,
 	};
 	rc = server->ops->open(xid, &oparms, oplock, buf);
@@ -570,7 +545,7 @@ out_free_xid:
 	return rc;
 }
 
-int cifs_create(struct mnt_idmap *idmap, struct inode *inode,
+int cifs_create(struct user_namespace *mnt_userns, struct inode *inode,
 		struct dentry *direntry, umode_t mode, bool excl)
 {
 	int rc;
@@ -620,7 +595,7 @@ out_free_xid:
 	return rc;
 }
 
-int cifs_mknod(struct mnt_idmap *idmap, struct inode *inode,
+int cifs_mknod(struct user_namespace *mnt_userns, struct inode *inode,
 	       struct dentry *direntry, umode_t mode, dev_t device_number)
 {
 	int rc = -EPERM;
@@ -652,18 +627,11 @@ int cifs_mknod(struct mnt_idmap *idmap, struct inode *inode,
 		goto mknod_out;
 	}
 
-	trace_smb3_mknod_enter(xid, tcon->tid, tcon->ses->Suid, full_path);
-
 	rc = tcon->ses->server->ops->make_node(xid, inode, direntry, tcon,
 					       full_path, mode,
 					       device_number);
 
 mknod_out:
-	if (rc)
-		trace_smb3_mknod_err(xid,  tcon->tid, tcon->ses->Suid, rc);
-	else
-		trace_smb3_mknod_done(xid, tcon->tid, tcon->ses->Suid);
-
 	free_dentry_path(page);
 	free_xid(xid);
 	cifs_put_tlink(tlink);
@@ -727,10 +695,9 @@ cifs_lookup(struct inode *parent_dir_inode, struct dentry *direntry,
 		 full_path, d_inode(direntry));
 
 again:
-	if (pTcon->posix_extensions) {
-		rc = smb311_posix_get_inode_info(&newInode, full_path, NULL,
-						 parent_dir_inode->i_sb, xid);
-	} else if (pTcon->unix_ext) {
+	if (pTcon->posix_extensions)
+		rc = smb311_posix_get_inode_info(&newInode, full_path, parent_dir_inode->i_sb, xid);
+	else if (pTcon->unix_ext) {
 		rc = cifs_get_inode_info_unix(&newInode, full_path,
 					      parent_dir_inode->i_sb, xid);
 	} else {
@@ -762,8 +729,7 @@ again:
 }
 
 static int
-cifs_d_revalidate(struct inode *dir, const struct qstr *name,
-		  struct dentry *direntry, unsigned int flags)
+cifs_d_revalidate(struct dentry *direntry, unsigned int flags)
 {
 	struct inode *inode;
 	int rc;
@@ -846,7 +812,7 @@ cifs_d_revalidate(struct inode *dir, const struct qstr *name,
 
 const struct dentry_operations cifs_dentry_ops = {
 	.d_revalidate = cifs_d_revalidate,
-	.d_automount = cifs_d_automount,
+	.d_automount = cifs_dfs_d_automount,
 /* d_delete:       cifs_d_delete,      */ /* not needed except for debugging */
 };
 
@@ -921,5 +887,5 @@ const struct dentry_operations cifs_ci_dentry_ops = {
 	.d_revalidate = cifs_d_revalidate,
 	.d_hash = cifs_ci_hash,
 	.d_compare = cifs_ci_compare,
-	.d_automount = cifs_d_automount,
+	.d_automount = cifs_dfs_d_automount,
 };

@@ -55,8 +55,8 @@ EXPORT_SYMBOL_GPL(irq_of_parse_and_map);
  * of_irq_find_parent - Given a device node, find its interrupt parent node
  * @child: pointer to device node
  *
- * Return: A pointer to the interrupt parent node with refcount increased
- * or NULL if the interrupt parent could not be determined.
+ * Return: A pointer to the interrupt parent node, or NULL if the interrupt
+ * parent could not be determined.
  */
 struct device_node *of_irq_find_parent(struct device_node *child)
 {
@@ -178,7 +178,7 @@ int of_irq_parse_raw(const __be32 *addr, struct of_phandle_args *out_irq)
 	struct device_node *ipar, *tnode, *old = NULL;
 	__be32 initial_match_array[MAX_PHANDLE_ARGS];
 	const __be32 *match_array = initial_match_array;
-	const __be32 *tmp, dummy_imask[] = { [0 ... (MAX_PHANDLE_ARGS - 1)] = cpu_to_be32(~0) };
+	const __be32 *tmp, dummy_imask[] = { [0 ... MAX_PHANDLE_ARGS] = cpu_to_be32(~0) };
 	u32 intsize = 1, addrsize;
 	int i, rc = -EINVAL;
 
@@ -438,8 +438,9 @@ int of_irq_to_resource(struct device_node *dev, int index, struct resource *r)
 		of_property_read_string_index(dev, "interrupt-names", index,
 					      &name);
 
-		*r = DEFINE_RES_IRQ_NAMED(irq, name ?: of_node_full_name(dev));
-		r->flags |= irq_get_trigger_type(irq);
+		r->start = r->end = irq;
+		r->flags = IORESOURCE_IRQ | irqd_get_trigger_type(irq_get_irq_data(irq));
+		r->name = name ? name : of_node_full_name(dev);
 	}
 
 	return irq;
@@ -466,16 +467,10 @@ int of_irq_get(struct device_node *dev, int index)
 		return rc;
 
 	domain = irq_find_host(oirq.np);
-	if (!domain) {
-		rc = -EPROBE_DEFER;
-		goto out;
-	}
+	if (!domain)
+		return -EPROBE_DEFER;
 
-	rc = irq_create_of_mapping(&oirq);
-out:
-	of_node_put(oirq.np);
-
-	return rc;
+	return irq_create_of_mapping(&oirq);
 }
 EXPORT_SYMBOL_GPL(of_irq_get);
 
@@ -670,20 +665,8 @@ err:
 	}
 }
 
-/**
- * of_msi_xlate - map a MSI ID and find relevant MSI controller node
- * @dev: device for which the mapping is to be done.
- * @msi_np: Pointer to store the MSI controller node
- * @id_in: Device ID.
- *
- * Walk up the device hierarchy looking for devices with a "msi-map"
- * property. If found, apply the mapping to @id_in. @msi_np pointed
- * value must be NULL on entry, if an MSI controller is found @msi_np is
- * initialized to the MSI controller node with a reference held.
- *
- * Returns: The mapped MSI id.
- */
-u32 of_msi_xlate(struct device *dev, struct device_node **msi_np, u32 id_in)
+static u32 __of_msi_map_id(struct device *dev, struct device_node **np,
+			    u32 id_in)
 {
 	struct device *parent_dev;
 	u32 id_out = id_in;
@@ -694,7 +677,7 @@ u32 of_msi_xlate(struct device *dev, struct device_node **msi_np, u32 id_in)
 	 */
 	for (parent_dev = dev; parent_dev; parent_dev = parent_dev->parent)
 		if (!of_map_id(parent_dev->of_node, id_in, "msi-map",
-				"msi-map-mask", msi_np, &id_out))
+				"msi-map-mask", np, &id_out))
 			break;
 	return id_out;
 }
@@ -712,7 +695,7 @@ u32 of_msi_xlate(struct device *dev, struct device_node **msi_np, u32 id_in)
  */
 u32 of_msi_map_id(struct device *dev, struct device_node *msi_np, u32 id_in)
 {
-	return of_msi_xlate(dev, &msi_np, id_in);
+	return __of_msi_map_id(dev, &msi_np, id_in);
 }
 
 /**
@@ -731,7 +714,7 @@ struct irq_domain *of_msi_map_get_device_domain(struct device *dev, u32 id,
 {
 	struct device_node *np = NULL;
 
-	of_msi_xlate(dev, &np, id);
+	__of_msi_map_id(dev, &np, id);
 	return irq_find_matching_host(np, bus_token);
 }
 
@@ -746,7 +729,7 @@ struct irq_domain *of_msi_map_get_device_domain(struct device *dev, u32 id,
  * Returns: the MSI domain for this device (or NULL on failure).
  */
 struct irq_domain *of_msi_get_domain(struct device *dev,
-				     const struct device_node *np,
+				     struct device_node *np,
 				     enum irq_domain_bus_token token)
 {
 	struct of_phandle_iterator it;
@@ -761,14 +744,13 @@ struct irq_domain *of_msi_get_domain(struct device *dev,
 
 	return NULL;
 }
-EXPORT_SYMBOL_GPL(of_msi_get_domain);
 
 /**
  * of_msi_configure - Set the msi_domain field of a device
  * @dev: device structure to associate with an MSI irq domain
  * @np: device node for that device
  */
-void of_msi_configure(struct device *dev, const struct device_node *np)
+void of_msi_configure(struct device *dev, struct device_node *np)
 {
 	dev_set_msi_domain(dev,
 			   of_msi_get_domain(dev, np, DOMAIN_BUS_PLATFORM_MSI));

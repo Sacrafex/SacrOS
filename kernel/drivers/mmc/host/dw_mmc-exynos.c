@@ -11,6 +11,7 @@
 #include <linux/mmc/host.h>
 #include <linux/mmc/mmc.h>
 #include <linux/of.h>
+#include <linux/of_gpio.h>
 #include <linux/pm_runtime.h>
 #include <linux/slab.h>
 
@@ -702,13 +703,15 @@ static int dw_mci_exynos_probe(struct platform_device *pdev)
 	return 0;
 }
 
-static void dw_mci_exynos_remove(struct platform_device *pdev)
+static int dw_mci_exynos_remove(struct platform_device *pdev)
 {
 	pm_runtime_disable(&pdev->dev);
 	pm_runtime_set_suspended(&pdev->dev);
 	pm_runtime_put_noidle(&pdev->dev);
 
 	dw_mci_pltfm_remove(pdev);
+
+	return 0;
 }
 
 static const struct dev_pm_ops dw_mci_exynos_pmops = {

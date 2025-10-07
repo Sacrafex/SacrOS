@@ -30,87 +30,69 @@
  * - future firmware versions could add support for >1 planes
  */
 static const struct venus_format vdec_formats[] = {
-	[VENUS_FMT_NV12] = {
+	{
 		.pixfmt = V4L2_PIX_FMT_NV12,
 		.num_planes = 1,
 		.type = V4L2_BUF_TYPE_VIDEO_CAPTURE_MPLANE,
-	},
-	[VENUS_FMT_QC08C] = {
+	}, {
 		.pixfmt = V4L2_PIX_FMT_QC08C,
 		.num_planes = 1,
 		.type = V4L2_BUF_TYPE_VIDEO_CAPTURE_MPLANE,
-	},
-	[VENUS_FMT_QC10C] = {
+	}, {
 		.pixfmt = V4L2_PIX_FMT_QC10C,
 		.num_planes = 1,
 		.type = V4L2_BUF_TYPE_VIDEO_CAPTURE_MPLANE,
-	},
-	[VENUS_FMT_P010] = {
-		.pixfmt = V4L2_PIX_FMT_P010,
+	}, {
+		.pixfmt = V4L2_PIX_FMT_MPEG4,
 		.num_planes = 1,
-		.type = V4L2_BUF_TYPE_VIDEO_CAPTURE_MPLANE,
-	},
-	[VENUS_FMT_H264] = {
+		.type = V4L2_BUF_TYPE_VIDEO_OUTPUT_MPLANE,
+		.flags = V4L2_FMT_FLAG_DYN_RESOLUTION,
+	}, {
+		.pixfmt = V4L2_PIX_FMT_MPEG2,
+		.num_planes = 1,
+		.type = V4L2_BUF_TYPE_VIDEO_OUTPUT_MPLANE,
+		.flags = V4L2_FMT_FLAG_DYN_RESOLUTION,
+	}, {
+		.pixfmt = V4L2_PIX_FMT_H263,
+		.num_planes = 1,
+		.type = V4L2_BUF_TYPE_VIDEO_OUTPUT_MPLANE,
+		.flags = V4L2_FMT_FLAG_DYN_RESOLUTION,
+	}, {
+		.pixfmt = V4L2_PIX_FMT_VC1_ANNEX_G,
+		.num_planes = 1,
+		.type = V4L2_BUF_TYPE_VIDEO_OUTPUT_MPLANE,
+		.flags = V4L2_FMT_FLAG_DYN_RESOLUTION,
+	}, {
+		.pixfmt = V4L2_PIX_FMT_VC1_ANNEX_L,
+		.num_planes = 1,
+		.type = V4L2_BUF_TYPE_VIDEO_OUTPUT_MPLANE,
+		.flags = V4L2_FMT_FLAG_DYN_RESOLUTION,
+	}, {
 		.pixfmt = V4L2_PIX_FMT_H264,
 		.num_planes = 1,
 		.type = V4L2_BUF_TYPE_VIDEO_OUTPUT_MPLANE,
 		.flags = V4L2_FMT_FLAG_DYN_RESOLUTION,
-	},
-	[VENUS_FMT_VP8] = {
+	}, {
 		.pixfmt = V4L2_PIX_FMT_VP8,
 		.num_planes = 1,
 		.type = V4L2_BUF_TYPE_VIDEO_OUTPUT_MPLANE,
 		.flags = V4L2_FMT_FLAG_DYN_RESOLUTION,
-	},
-	[VENUS_FMT_VP9] = {
+	}, {
 		.pixfmt = V4L2_PIX_FMT_VP9,
 		.num_planes = 1,
 		.type = V4L2_BUF_TYPE_VIDEO_OUTPUT_MPLANE,
 		.flags = V4L2_FMT_FLAG_DYN_RESOLUTION,
-	},
-	[VENUS_FMT_HEVC] = {
+	}, {
+		.pixfmt = V4L2_PIX_FMT_XVID,
+		.num_planes = 1,
+		.type = V4L2_BUF_TYPE_VIDEO_OUTPUT_MPLANE,
+		.flags = V4L2_FMT_FLAG_DYN_RESOLUTION,
+	}, {
 		.pixfmt = V4L2_PIX_FMT_HEVC,
 		.num_planes = 1,
 		.type = V4L2_BUF_TYPE_VIDEO_OUTPUT_MPLANE,
 		.flags = V4L2_FMT_FLAG_DYN_RESOLUTION,
 	},
-	[VENUS_FMT_VC1_ANNEX_G] = {
-		.pixfmt = V4L2_PIX_FMT_VC1_ANNEX_G,
-		.num_planes = 1,
-		.type = V4L2_BUF_TYPE_VIDEO_OUTPUT_MPLANE,
-		.flags = V4L2_FMT_FLAG_DYN_RESOLUTION,
-	},
-	[VENUS_FMT_VC1_ANNEX_L] = {
-		.pixfmt = V4L2_PIX_FMT_VC1_ANNEX_L,
-		.num_planes = 1,
-		.type = V4L2_BUF_TYPE_VIDEO_OUTPUT_MPLANE,
-		.flags = V4L2_FMT_FLAG_DYN_RESOLUTION,
-	},
-	[VENUS_FMT_MPEG4] = {
-		.pixfmt = V4L2_PIX_FMT_MPEG4,
-		.num_planes = 1,
-		.type = V4L2_BUF_TYPE_VIDEO_OUTPUT_MPLANE,
-		.flags = V4L2_FMT_FLAG_DYN_RESOLUTION,
-	},
-	[VENUS_FMT_MPEG2] = {
-		.pixfmt = V4L2_PIX_FMT_MPEG2,
-		.num_planes = 1,
-		.type = V4L2_BUF_TYPE_VIDEO_OUTPUT_MPLANE,
-		.flags = V4L2_FMT_FLAG_DYN_RESOLUTION,
-	},
-	[VENUS_FMT_H263] = {
-		.pixfmt = V4L2_PIX_FMT_H263,
-		.num_planes = 1,
-		.type = V4L2_BUF_TYPE_VIDEO_OUTPUT_MPLANE,
-		.flags = V4L2_FMT_FLAG_DYN_RESOLUTION,
-	},
-	[VENUS_FMT_XVID] = {
-		.pixfmt = V4L2_PIX_FMT_XVID,
-		.num_planes = 1,
-		.type = V4L2_BUF_TYPE_VIDEO_OUTPUT_MPLANE,
-		.flags = V4L2_FMT_FLAG_DYN_RESOLUTION,
-	},
-
 };
 
 static const struct venus_format *
@@ -154,14 +136,14 @@ find_format_by_index(struct venus_inst *inst, unsigned int index, u32 type)
 		return NULL;
 
 	for (i = 0; i < size; i++) {
-		bool valid = false;
+		bool valid;
 
 		if (fmt[i].type != type)
 			continue;
 
 		if (V4L2_TYPE_IS_OUTPUT(type)) {
 			valid = venus_helper_check_codec(inst, fmt[i].pixfmt);
-		} else {
+		} else if (V4L2_TYPE_IS_CAPTURE(type)) {
 			valid = venus_helper_check_format(inst, fmt[i].pixfmt);
 
 			if (fmt[i].pixfmt == V4L2_PIX_FMT_QC10C &&
@@ -222,13 +204,8 @@ vdec_try_fmt_common(struct venus_inst *inst, struct v4l2_format *f)
 					   pixmp->height);
 
 	if (f->type == V4L2_BUF_TYPE_VIDEO_CAPTURE_MPLANE) {
-		unsigned int stride = pixmp->width;
-
-		if (pixmp->pixelformat == V4L2_PIX_FMT_P010)
-			stride *= 2;
-
 		pfmt[0].sizeimage = szimage;
-		pfmt[0].bytesperline = ALIGN(stride, 128);
+		pfmt[0].bytesperline = ALIGN(pixmp->width, 128);
 	} else {
 		pfmt[0].sizeimage = clamp_t(u32, pfmt[0].sizeimage, 0, SZ_8M);
 		pfmt[0].sizeimage = max(pfmt[0].sizeimage, szimage);
@@ -482,7 +459,8 @@ static int vdec_s_parm(struct file *file, void *fh, struct v4l2_streamparm *a)
 	do_div(us_per_frame, timeperframe->denominator);
 
 	us_per_frame = clamp(us_per_frame, 1, USEC_PER_SEC);
-	fps = USEC_PER_SEC / (u32)us_per_frame;
+	fps = (u64)USEC_PER_SEC;
+	do_div(fps, us_per_frame);
 	fps = min(VENUS_MAX_FPS, fps);
 
 	inst->fps = fps;
@@ -567,7 +545,7 @@ vdec_decoder_cmd(struct file *file, void *fh, struct v4l2_decoder_cmd *cmd)
 
 		fdata.buffer_type = HFI_BUFFER_INPUT;
 		fdata.flags |= HFI_BUFFERFLAG_EOS;
-		if (IS_V6(inst->core) && is_fw_rev_or_older(inst->core, 1, 0, 87))
+		if (IS_V6(inst->core))
 			fdata.device_addr = 0;
 		else
 			fdata.device_addr = 0xdeadb000;
@@ -700,14 +678,6 @@ static int vdec_set_properties(struct venus_inst *inst)
 			return ret;
 	}
 
-	/* Enabling sufficient sequence change support for VP9 */
-	if (is_fw_rev_or_newer(inst->core, 5, 4, 51)) {
-		ptype = HFI_PROPERTY_PARAM_VDEC_ENABLE_SUFFICIENT_SEQCHANGE_EVENT;
-		ret = hfi_session_set_property(inst, ptype, &en);
-		if (ret)
-			return ret;
-	}
-
 	ptype = HFI_PROPERTY_PARAM_VDEC_CONCEAL_COLOR;
 	conceal = ctr->conceal_color & 0xffff;
 	conceal |= ((ctr->conceal_color >> 16) & 0xffff) << 10;
@@ -725,7 +695,7 @@ static int vdec_set_work_route(struct venus_inst *inst)
 	u32 ptype = HFI_PROPERTY_PARAM_WORK_ROUTE;
 	struct hfi_video_work_route wr;
 
-	if (!(IS_IRIS2(inst->core) || IS_IRIS2_1(inst->core)))
+	if (!IS_V6(inst->core))
 		return 0;
 
 	wr.video_work_route = inst->core->res->num_vpp_pipes;
@@ -734,9 +704,6 @@ static int vdec_set_work_route(struct venus_inst *inst)
 }
 
 #define is_ubwc_fmt(fmt) (!!((fmt) & HFI_COLOR_FORMAT_UBWC_BASE))
-#define is_10bit_ubwc_fmt(fmt) (!!((fmt) & HFI_COLOR_FORMAT_10_BIT_BASE & \
-				 HFI_COLOR_FORMAT_UBWC_BASE))
-
 
 static int vdec_output_conf(struct venus_inst *inst)
 {
@@ -784,7 +751,7 @@ static int vdec_output_conf(struct venus_inst *inst)
 		inst->opb_fmt = out2_fmt;
 		inst->dpb_buftype = HFI_BUFFER_OUTPUT;
 		inst->dpb_fmt = out_fmt;
-	} else if (is_ubwc_fmt(out2_fmt) || is_10bit_ubwc_fmt(out_fmt)) {
+	} else if (is_ubwc_fmt(out2_fmt)) {
 		inst->opb_buftype = HFI_BUFFER_OUTPUT;
 		inst->opb_fmt = out_fmt;
 		inst->dpb_buftype = HFI_BUFFER_OUTPUT2;
@@ -1108,20 +1075,10 @@ static int vdec_start_output(struct venus_inst *inst)
 
 	if (inst->codec_state == VENUS_DEC_STATE_SEEK) {
 		ret = venus_helper_process_initial_out_bufs(inst);
-		if (ret)
-			return ret;
-
-		if (inst->next_buf_last) {
+		if (inst->next_buf_last)
 			inst->codec_state = VENUS_DEC_STATE_DRC;
-		} else {
+		else
 			inst->codec_state = VENUS_DEC_STATE_DECODING;
-
-			if (inst->streamon_cap) {
-				ret = venus_helper_queue_dpb_bufs(inst);
-				if (ret)
-					return ret;
-			}
-		}
 		goto done;
 	}
 
@@ -1511,13 +1468,8 @@ static void vdec_event_change(struct venus_inst *inst,
 	inst->out_width = ev_data->width;
 	inst->out_height = ev_data->height;
 
-	if (inst->bit_depth != ev_data->bit_depth) {
+	if (inst->bit_depth != ev_data->bit_depth)
 		inst->bit_depth = ev_data->bit_depth;
-		if (inst->bit_depth == VIDC_BITDEPTH_10)
-			inst->fmt_cap = &vdec_formats[VENUS_FMT_P010];
-		else
-			inst->fmt_cap = &vdec_formats[VENUS_FMT_NV12];
-	}
 
 	if (inst->pic_struct != ev_data->pic_struct)
 		inst->pic_struct = ev_data->pic_struct;
@@ -1609,8 +1561,8 @@ static const struct hfi_inst_ops vdec_hfi_ops = {
 static void vdec_inst_init(struct venus_inst *inst)
 {
 	inst->hfi_codec = HFI_VIDEO_CODEC_H264;
-	inst->fmt_out = &vdec_formats[VENUS_FMT_H264];
-	inst->fmt_cap = &vdec_formats[VENUS_FMT_NV12];
+	inst->fmt_out = &vdec_formats[8];
+	inst->fmt_cap = &vdec_formats[0];
 	inst->width = frame_width_min(inst);
 	inst->height = ALIGN(frame_height_min(inst), 32);
 	inst->crop.left = 0;
@@ -1649,7 +1601,7 @@ static int m2m_queue_init(void *priv, struct vb2_queue *src_vq,
 	src_vq->drv_priv = inst;
 	src_vq->buf_struct_size = sizeof(struct venus_buffer);
 	src_vq->allow_zero_bytesused = 1;
-	src_vq->min_queued_buffers = 0;
+	src_vq->min_buffers_needed = 0;
 	src_vq->dev = inst->core->dev;
 	src_vq->lock = &inst->ctx_q_lock;
 	ret = vb2_queue_init(src_vq);
@@ -1664,7 +1616,7 @@ static int m2m_queue_init(void *priv, struct vb2_queue *src_vq,
 	dst_vq->drv_priv = inst;
 	dst_vq->buf_struct_size = sizeof(struct venus_buffer);
 	dst_vq->allow_zero_bytesused = 1;
-	dst_vq->min_queued_buffers = 0;
+	dst_vq->min_buffers_needed = 0;
 	dst_vq->dev = inst->core->dev;
 	dst_vq->lock = &inst->ctx_q_lock;
 	return vb2_queue_init(dst_vq);
@@ -1705,6 +1657,10 @@ static int vdec_open(struct file *file)
 	if (ret)
 		goto err_free;
 
+	ret = hfi_session_create(inst, &vdec_hfi_ops);
+	if (ret)
+		goto err_ctrl_deinit;
+
 	vdec_inst_init(inst);
 
 	ida_init(&inst->dpb_ids);
@@ -1716,18 +1672,14 @@ static int vdec_open(struct file *file)
 	inst->m2m_dev = v4l2_m2m_init(&vdec_m2m_ops);
 	if (IS_ERR(inst->m2m_dev)) {
 		ret = PTR_ERR(inst->m2m_dev);
-		goto err_ctrl_deinit;
+		goto err_session_destroy;
 	}
 
 	inst->m2m_ctx = v4l2_m2m_ctx_init(inst->m2m_dev, inst, m2m_queue_init);
 	if (IS_ERR(inst->m2m_ctx)) {
 		ret = PTR_ERR(inst->m2m_ctx);
-		goto err_m2m_dev_release;
+		goto err_m2m_release;
 	}
-
-	ret = hfi_session_create(inst, &vdec_hfi_ops);
-	if (ret)
-		goto err_m2m_ctx_release;
 
 	v4l2_fh_init(&inst->fh, core->vdev_dec);
 
@@ -1738,12 +1690,12 @@ static int vdec_open(struct file *file)
 
 	return 0;
 
-err_m2m_ctx_release:
-	v4l2_m2m_ctx_release(inst->m2m_ctx);
-err_m2m_dev_release:
+err_m2m_release:
 	v4l2_m2m_release(inst->m2m_dev);
+err_session_destroy:
+	hfi_session_destroy(inst);
 err_ctrl_deinit:
-	v4l2_ctrl_handler_free(&inst->ctrl_handler);
+	vdec_ctrl_deinit(inst);
 err_free:
 	kfree(inst);
 	return ret;
@@ -1754,9 +1706,18 @@ static int vdec_close(struct file *file)
 	struct venus_inst *inst = to_inst(file);
 
 	vdec_pm_get(inst);
+
 	cancel_work_sync(&inst->delayed_process_work);
-	venus_close_common(inst);
+	v4l2_m2m_ctx_release(inst->m2m_ctx);
+	v4l2_m2m_release(inst->m2m_dev);
+	vdec_ctrl_deinit(inst);
 	ida_destroy(&inst->dpb_ids);
+	hfi_session_destroy(inst);
+	mutex_destroy(&inst->lock);
+	mutex_destroy(&inst->ctx_q_lock);
+	v4l2_fh_del(&inst->fh);
+	v4l2_fh_exit(&inst->fh);
+
 	vdec_pm_put(inst, false);
 
 	kfree(inst);
@@ -1825,7 +1786,7 @@ err_vdev_release:
 	return ret;
 }
 
-static void vdec_remove(struct platform_device *pdev)
+static int vdec_remove(struct platform_device *pdev)
 {
 	struct venus_core *core = dev_get_drvdata(pdev->dev.parent);
 
@@ -1834,6 +1795,8 @@ static void vdec_remove(struct platform_device *pdev)
 
 	if (core->pm_ops->vdec_put)
 		core->pm_ops->vdec_put(core->dev_dec);
+
+	return 0;
 }
 
 static __maybe_unused int vdec_runtime_suspend(struct device *dev)

@@ -2595,6 +2595,8 @@ static const struct vb2_ops s5p_jpeg_qops = {
 	.queue_setup		= s5p_jpeg_queue_setup,
 	.buf_prepare		= s5p_jpeg_buf_prepare,
 	.buf_queue		= s5p_jpeg_buf_queue,
+	.wait_prepare		= vb2_ops_wait_prepare,
+	.wait_finish		= vb2_ops_wait_finish,
 	.start_streaming	= s5p_jpeg_start_streaming,
 	.stop_streaming		= s5p_jpeg_stop_streaming,
 };
@@ -2873,8 +2875,10 @@ static int s5p_jpeg_probe(struct platform_device *pdev)
 
 	/* interrupt service routine registration */
 	jpeg->irq = ret = platform_get_irq(pdev, 0);
-	if (ret < 0)
+	if (ret < 0) {
+		dev_err(&pdev->dev, "cannot find IRQ\n");
 		return ret;
+	}
 
 	ret = devm_request_irq(&pdev->dev, jpeg->irq, jpeg->variant->jpeg_irq,
 				0, dev_name(&pdev->dev), jpeg);
@@ -2992,7 +2996,7 @@ device_register_rollback:
 	return ret;
 }
 
-static void s5p_jpeg_remove(struct platform_device *pdev)
+static int s5p_jpeg_remove(struct platform_device *pdev)
 {
 	struct s5p_jpeg *jpeg = platform_get_drvdata(pdev);
 	int i;
@@ -3009,6 +3013,8 @@ static void s5p_jpeg_remove(struct platform_device *pdev)
 		for (i = jpeg->variant->num_clocks - 1; i >= 0; i--)
 			clk_disable_unprepare(jpeg->clocks[i]);
 	}
+
+	return 0;
 }
 
 #ifdef CONFIG_PM
@@ -3165,7 +3171,7 @@ static struct platform_driver s5p_jpeg_driver = {
 	.probe = s5p_jpeg_probe,
 	.remove = s5p_jpeg_remove,
 	.driver = {
-		.of_match_table	= samsung_jpeg_match,
+		.of_match_table	= of_match_ptr(samsung_jpeg_match),
 		.name		= S5P_JPEG_M2M_NAME,
 		.pm		= &s5p_jpeg_pm_ops,
 	},

@@ -31,18 +31,18 @@
 /* "show" function for the bond_masters attribute.
  * The class parameter is ignored.
  */
-static ssize_t bonding_show_bonds(const struct class *cls,
-				  const struct class_attribute *attr,
+static ssize_t bonding_show_bonds(struct class *cls,
+				  struct class_attribute *attr,
 				  char *buf)
 {
-	const struct bond_net *bn =
-		container_of_const(attr, struct bond_net, class_attr_bonding_masters);
-	struct bonding *bond;
+	struct bond_net *bn =
+		container_of(attr, struct bond_net, class_attr_bonding_masters);
 	int res = 0;
+	struct bonding *bond;
 
-	rcu_read_lock();
+	rtnl_lock();
 
-	list_for_each_entry_rcu(bond, &bn->dev_list, bond_list) {
+	list_for_each_entry(bond, &bn->dev_list, bond_list) {
 		if (res > (PAGE_SIZE - IFNAMSIZ)) {
 			/* not enough space for another interface name */
 			if ((PAGE_SIZE - res) > 10)
@@ -55,11 +55,11 @@ static ssize_t bonding_show_bonds(const struct class *cls,
 	if (res)
 		buf[res-1] = '\n'; /* eat the leftover space */
 
-	rcu_read_unlock();
+	rtnl_unlock();
 	return res;
 }
 
-static struct net_device *bond_get_by_name(const struct bond_net *bn, const char *ifname)
+static struct net_device *bond_get_by_name(struct bond_net *bn, const char *ifname)
 {
 	struct bonding *bond;
 
@@ -75,12 +75,12 @@ static struct net_device *bond_get_by_name(const struct bond_net *bn, const char
  *
  * The class parameter is ignored.
  */
-static ssize_t bonding_store_bonds(const struct class *cls,
-				   const struct class_attribute *attr,
+static ssize_t bonding_store_bonds(struct class *cls,
+				   struct class_attribute *attr,
 				   const char *buffer, size_t count)
 {
-	const struct bond_net *bn =
-		container_of_const(attr, struct bond_net, class_attr_bonding_masters);
+	struct bond_net *bn =
+		container_of(attr, struct bond_net, class_attr_bonding_masters);
 	char command[IFNAMSIZ + 1] = {0, };
 	char *ifname;
 	int rv, res = count;
@@ -170,9 +170,10 @@ static ssize_t bonding_show_slaves(struct device *d,
 	struct slave *slave;
 	int res = 0;
 
-	rcu_read_lock();
+	if (!rtnl_trylock())
+		return restart_syscall();
 
-	bond_for_each_slave_rcu(bond, slave, iter) {
+	bond_for_each_slave(bond, slave, iter) {
 		if (res > (PAGE_SIZE - IFNAMSIZ)) {
 			/* not enough space for another interface name */
 			if ((PAGE_SIZE - res) > 10)
@@ -183,7 +184,7 @@ static ssize_t bonding_show_slaves(struct device *d,
 		res += sysfs_emit_at(buf, res, "%s ", slave->dev->name);
 	}
 
-	rcu_read_unlock();
+	rtnl_unlock();
 
 	if (res)
 		buf[res-1] = '\n'; /* eat the leftover space */
@@ -625,9 +626,10 @@ static ssize_t bonding_show_queue_id(struct device *d,
 	struct slave *slave;
 	int res = 0;
 
-	rcu_read_lock();
+	if (!rtnl_trylock())
+		return restart_syscall();
 
-	bond_for_each_slave_rcu(bond, slave, iter) {
+	bond_for_each_slave(bond, slave, iter) {
 		if (res > (PAGE_SIZE - IFNAMSIZ - 6)) {
 			/* not enough space for another interface_name:queue_id pair */
 			if ((PAGE_SIZE - res) > 10)
@@ -636,13 +638,12 @@ static ssize_t bonding_show_queue_id(struct device *d,
 			break;
 		}
 		res += sysfs_emit_at(buf, res, "%s:%d ",
-				     slave->dev->name,
-				     READ_ONCE(slave->queue_id));
+				     slave->dev->name, slave->queue_id);
 	}
 	if (res)
 		buf[res-1] = '\n'; /* eat the leftover space */
 
-	rcu_read_unlock();
+	rtnl_unlock();
 
 	return res;
 }
@@ -802,7 +803,7 @@ static const struct attribute_group bonding_group = {
 /* Initialize sysfs.  This sets up the bonding_masters file in
  * /sys/class/net.
  */
-int __net_init bond_create_sysfs(struct bond_net *bn)
+int bond_create_sysfs(struct bond_net *bn)
 {
 	int ret;
 
@@ -835,7 +836,7 @@ int __net_init bond_create_sysfs(struct bond_net *bn)
 }
 
 /* Remove /sys/class/net/bonding_masters. */
-void __net_exit bond_destroy_sysfs(struct bond_net *bn)
+void bond_destroy_sysfs(struct bond_net *bn)
 {
 	netdev_class_remove_file_ns(&bn->class_attr_bonding_masters, bn->net);
 }

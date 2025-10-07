@@ -602,7 +602,7 @@ static int dma_init(struct device_node *cloud, struct device_node *dma_node)
 	unsigned max_tx_chan, max_rx_chan, max_rx_flow, max_tx_sched;
 	struct device_node *node = dma_node;
 	struct knav_dma_device *dma;
-	int ret, num_chan = 0;
+	int ret, len, num_chan = 0;
 	resource_size_t size;
 	u32 timeout;
 	u32 i;
@@ -615,13 +615,25 @@ static int dma_init(struct device_node *cloud, struct device_node *dma_node)
 	INIT_LIST_HEAD(&dma->list);
 	INIT_LIST_HEAD(&dma->chan_list);
 
-	ret = of_property_read_variable_u32_array(cloud, "ti,navigator-cloud-address",
-						  dma->qm_base_address, 1, DMA_MAX_QMS);
-	if (ret < 0) {
+	if (!of_find_property(cloud, "ti,navigator-cloud-address", &len)) {
+		dev_err(kdev->dev, "unspecified navigator cloud addresses\n");
+		return -ENODEV;
+	}
+
+	dma->logical_queue_managers = len / sizeof(u32);
+	if (dma->logical_queue_managers > DMA_MAX_QMS) {
+		dev_warn(kdev->dev, "too many queue mgrs(>%d) rest ignored\n",
+			 dma->logical_queue_managers);
+		dma->logical_queue_managers = DMA_MAX_QMS;
+	}
+
+	ret = of_property_read_u32_array(cloud, "ti,navigator-cloud-address",
+					dma->qm_base_address,
+					dma->logical_queue_managers);
+	if (ret) {
 		dev_err(kdev->dev, "invalid navigator cloud addresses\n");
 		return -ENODEV;
 	}
-	dma->logical_queue_managers = ret;
 
 	dma->reg_global	 = pktdma_get_regs(dma, node, 0, &size);
 	if (IS_ERR(dma->reg_global))
@@ -654,8 +666,8 @@ static int dma_init(struct device_node *cloud, struct device_node *dma_node)
 	dma->rx_priority = DMA_PRIO_DEFAULT;
 	dma->tx_priority = DMA_PRIO_DEFAULT;
 
-	dma->enable_all	= of_property_read_bool(node, "ti,enable-all");
-	dma->loopback	= of_property_read_bool(node, "ti,loop-back");
+	dma->enable_all	= (of_get_property(node, "ti,enable-all", NULL) != NULL);
+	dma->loopback	= (of_get_property(node, "ti,loop-back",  NULL) != NULL);
 
 	ret = of_property_read_u32(node, "ti,rx-retry-timeout", &timeout);
 	if (ret < 0) {
@@ -761,7 +773,7 @@ err_pm_disable:
 	return ret;
 }
 
-static void knav_dma_remove(struct platform_device *pdev)
+static int knav_dma_remove(struct platform_device *pdev)
 {
 	struct knav_dma_device *dma;
 
@@ -772,6 +784,8 @@ static void knav_dma_remove(struct platform_device *pdev)
 
 	pm_runtime_put_sync(&pdev->dev);
 	pm_runtime_disable(&pdev->dev);
+
+	return 0;
 }
 
 static struct of_device_id of_match[] = {
@@ -784,7 +798,7 @@ MODULE_DEVICE_TABLE(of, of_match);
 static struct platform_driver knav_dma_driver = {
 	.probe	= knav_dma_probe,
 	.remove	= knav_dma_remove,
-	.driver	= {
+	.driver = {
 		.name		= "keystone-navigator-dma",
 		.of_match_table	= of_match,
 	},

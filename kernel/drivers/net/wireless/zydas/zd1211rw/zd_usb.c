@@ -17,7 +17,7 @@
 #include <linux/workqueue.h>
 #include <linux/module.h>
 #include <net/mac80211.h>
-#include <linux/unaligned.h>
+#include <asm/unaligned.h>
 
 #include "zd_def.h"
 #include "zd_mac.h"
@@ -107,16 +107,9 @@ static void int_urb_complete(struct urb *urb);
 static int request_fw_file(
 	const struct firmware **fw, const char *name, struct device *device)
 {
-	int r;
-
 	dev_dbg_f(device, "fw name %s\n", name);
 
-	r = request_firmware(fw, name, device);
-	if (r)
-		dev_err(device,
-		       "Could not load firmware file %s. Error number %d\n",
-		       name, r);
-	return r;
+	return request_firmware(fw, name, device);
 }
 
 static inline u16 get_bcdDevice(const struct usb_device *udev)
@@ -380,7 +373,7 @@ static inline void handle_regs_int(struct urb *urb)
 	spin_lock_irqsave(&intr->lock, flags);
 
 	int_num = le16_to_cpu(*(__le16 *)(urb->transfer_buffer+2));
-	if (int_num == (u16)CR_INTERRUPT) {
+	if (int_num == CR_INTERRUPT) {
 		struct zd_mac *mac = zd_hw_mac(zd_usb_to_hw(urb->context));
 		spin_lock(&mac->lock);
 		memcpy(&mac->intr_buffer, urb->transfer_buffer,
@@ -416,8 +409,7 @@ out:
 	spin_unlock_irqrestore(&intr->lock, flags);
 
 	/* CR_INTERRUPT might override read_reg too. */
-	if (int_num == (u16)CR_INTERRUPT &&
-	    atomic_read(&intr->read_regs_enabled))
+	if (int_num == CR_INTERRUPT && atomic_read(&intr->read_regs_enabled))
 		handle_regs_int_override(urb);
 }
 
@@ -445,7 +437,7 @@ static void int_urb_complete(struct urb *urb)
 	}
 
 	if (urb->actual_length < sizeof(hdr)) {
-		dev_dbg_f(urb_dev(urb), "error: urb %p too small\n", urb);
+		dev_dbg_f(urb_dev(urb), "error: urb %p to small\n", urb);
 		goto resubmit;
 	}
 
@@ -1007,7 +999,7 @@ resubmit:
  * @usb: the zd1211rw-private USB structure
  * @skb: a &struct sk_buff pointer
  *
- * This function transmits a frame to the device. It doesn't wait for
+ * This function tranmits a frame to the device. It doesn't wait for
  * completion. The frame must contain the control set and have all the
  * control set information available.
  *
@@ -1476,7 +1468,7 @@ static void zd_usb_stop(struct zd_usb *usb)
 {
 	dev_dbg_f(zd_usb_dev(usb), "\n");
 
-	zd_op_stop(zd_usb_to_hw(usb), false);
+	zd_op_stop(zd_usb_to_hw(usb));
 
 	zd_usb_disable_tx(usb);
 	zd_usb_disable_rx(usb);
@@ -1698,7 +1690,7 @@ int zd_usb_ioread16v(struct zd_usb *usb, u16 *values,
 	int r, i, req_len, actual_req_len, try_count = 0;
 	struct usb_device *udev;
 	struct usb_req_read_regs *req = NULL;
-	unsigned long time_left;
+	unsigned long timeout;
 	bool retry = false;
 
 	if (count < 1) {
@@ -1748,9 +1740,9 @@ retry_read:
 		goto error;
 	}
 
-	time_left = wait_for_completion_timeout(&usb->intr.read_regs.completion,
-						msecs_to_jiffies(50));
-	if (!time_left) {
+	timeout = wait_for_completion_timeout(&usb->intr.read_regs.completion,
+					      msecs_to_jiffies(50));
+	if (!timeout) {
 		disable_read_regs_int(usb);
 		dev_dbg_f(zd_usb_dev(usb), "read timed out\n");
 		r = -ETIMEDOUT;

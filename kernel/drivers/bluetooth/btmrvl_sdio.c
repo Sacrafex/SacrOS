@@ -40,7 +40,7 @@ static struct memory_type_mapping mem_type_mapping_tbl[] = {
 	{"EXTLAST", NULL, 0, 0xFE},
 };
 
-static const struct of_device_id btmrvl_sdio_of_match_table[] __maybe_unused = {
+static const struct of_device_id btmrvl_sdio_of_match_table[] = {
 	{ .compatible = "marvell,sd8897-bt" },
 	{ .compatible = "marvell,sd8997-bt" },
 	{ }
@@ -100,9 +100,7 @@ static int btmrvl_sdio_probe_of(struct device *dev,
 			}
 
 			/* Configure wakeup (enabled by default) */
-			ret = devm_device_init_wakeup(dev);
-			if (ret)
-				return dev_err_probe(dev, ret, "Failed to init wakeup\n");
+			device_init_wakeup(dev, true);
 		}
 	}
 
@@ -471,8 +469,6 @@ static int btmrvl_sdio_download_helper(struct btmrvl_sdio_card *card)
 	ret = request_firmware(&fw_helper, card->helper,
 						&card->func->dev);
 	if ((ret < 0) || !fw_helper) {
-		BT_ERR("request_firmware(helper) failed, error code = %d",
-									ret);
 		ret = -ENOENT;
 		goto done;
 	}
@@ -571,8 +567,6 @@ static int btmrvl_sdio_download_fw_w_helper(struct btmrvl_sdio_card *card)
 	ret = request_firmware(&fw_firmware, card->firmware,
 							&card->func->dev);
 	if ((ret < 0) || !fw_firmware) {
-		BT_ERR("request_firmware(firmware) failed, error code = %d",
-									ret);
 		ret = -ENOENT;
 		goto done;
 	}
@@ -1737,6 +1731,7 @@ static struct sdio_driver bt_mrvl_sdio = {
 	.probe		= btmrvl_sdio_probe,
 	.remove		= btmrvl_sdio_remove,
 	.drv = {
+		.owner = THIS_MODULE,
 		.coredump = btmrvl_sdio_coredump,
 		.pm = &btmrvl_sdio_pm_ops,
 	}

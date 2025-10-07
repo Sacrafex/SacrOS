@@ -12,13 +12,13 @@
 #include <linux/gpio/consumer.h>
 #include <linux/init.h>
 #include <linux/interrupt.h>
-#include <linux/mod_devicetable.h>
 #include <linux/module.h>
 #include <linux/platform_device.h>
 #include <linux/mutex.h>
-#include <linux/string.h>
 #include <linux/types.h>
 #include <linux/io.h>
+#include <linux/of.h>
+#include <linux/of_device.h>
 
 #include <sound/core.h>
 #include <sound/initval.h>
@@ -590,7 +590,7 @@ static int atmel_ac97c_pcm_new(struct atmel_ac97c *chip)
 
 	pcm->private_data = chip;
 	pcm->info_flags = 0;
-	strscpy(pcm->name, chip->card->shortname);
+	strcpy(pcm->name, chip->card->shortname);
 	chip->pcm = pcm;
 
 	return 0;
@@ -749,9 +749,9 @@ static int atmel_ac97c_probe(struct platform_device *pdev)
 
 	spin_lock_init(&chip->lock);
 
-	strscpy(card->driver, "Atmel AC97C");
-	strscpy(card->shortname, "Atmel AC97C");
-	strscpy(card->longname, "Atmel AC97 controller");
+	strcpy(card->driver, "Atmel AC97C");
+	strcpy(card->shortname, "Atmel AC97C");
+	sprintf(card->longname, "Atmel AC97 controller");
 
 	chip->card = card;
 	chip->pclk = pclk;
@@ -818,6 +818,7 @@ err_prepare_enable:
 	return retval;
 }
 
+#ifdef CONFIG_PM_SLEEP
 static int atmel_ac97c_suspend(struct device *pdev)
 {
 	struct snd_card *card = dev_get_drvdata(pdev);
@@ -836,9 +837,13 @@ static int atmel_ac97c_resume(struct device *pdev)
 	return ret;
 }
 
-static DEFINE_SIMPLE_DEV_PM_OPS(atmel_ac97c_pm, atmel_ac97c_suspend, atmel_ac97c_resume);
+static SIMPLE_DEV_PM_OPS(atmel_ac97c_pm, atmel_ac97c_suspend, atmel_ac97c_resume);
+#define ATMEL_AC97C_PM_OPS	&atmel_ac97c_pm
+#else
+#define ATMEL_AC97C_PM_OPS	NULL
+#endif
 
-static void atmel_ac97c_remove(struct platform_device *pdev)
+static int atmel_ac97c_remove(struct platform_device *pdev)
 {
 	struct snd_card *card = platform_get_drvdata(pdev);
 	struct atmel_ac97c *chip = get_chip(card);
@@ -853,6 +858,8 @@ static void atmel_ac97c_remove(struct platform_device *pdev)
 	free_irq(chip->irq, chip);
 
 	snd_card_free(card);
+
+	return 0;
 }
 
 static struct platform_driver atmel_ac97c_driver = {
@@ -860,7 +867,7 @@ static struct platform_driver atmel_ac97c_driver = {
 	.remove		= atmel_ac97c_remove,
 	.driver		= {
 		.name	= "atmel_ac97c",
-		.pm	= pm_ptr(&atmel_ac97c_pm),
+		.pm	= ATMEL_AC97C_PM_OPS,
 		.of_match_table = atmel_ac97c_dt_ids,
 	},
 };

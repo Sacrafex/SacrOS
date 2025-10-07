@@ -4,7 +4,10 @@
 
 #include <linux/const.h>
 
-#include <vdso/page.h>
+#define PAGE_SHIFT   13
+
+#define PAGE_SIZE    (_AC(1,UL) << PAGE_SHIFT)
+#define PAGE_MASK    (~(PAGE_SIZE-1))
 
 /* Flushing for D-cache alias handling is only needed if
  * the page size is smaller than 16K.

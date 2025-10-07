@@ -15,7 +15,6 @@
 #ifndef __LINUX_USB_GADGET_H
 #define __LINUX_USB_GADGET_H
 
-#include <linux/configfs.h>
 #include <linux/device.h>
 #include <linux/errno.h>
 #include <linux/init.h>
@@ -52,7 +51,6 @@ struct usb_ep;
  * @short_not_ok: When reading data, makes short packets be
  *     treated as errors (queue stops advancing till cleanup).
  * @dma_mapped: Indicates if request has been mapped to DMA (internal)
- * @sg_was_mapped: Set if the scatterlist has been mapped before the request
  * @complete: Function called when request completes, so this request and
  *	its buffer may be re-used.  The function will always be called with
  *	interrupts disabled, and it must not sleep.
@@ -112,7 +110,6 @@ struct usb_request {
 	unsigned		zero:1;
 	unsigned		short_not_ok:1;
 	unsigned		dma_mapped:1;
-	unsigned		sg_was_mapped:1;
 
 	void			(*complete)(struct usb_ep *ep,
 					struct usb_request *req);
@@ -229,18 +226,18 @@ struct usb_ep {
 
 	const char		*name;
 	const struct usb_ep_ops	*ops;
-	const struct usb_endpoint_descriptor	*desc;
-	const struct usb_ss_ep_comp_descriptor	*comp_desc;
 	struct list_head	ep_list;
 	struct usb_ep_caps	caps;
 	bool			claimed;
 	bool			enabled;
+	unsigned		maxpacket:16;
+	unsigned		maxpacket_limit:16;
+	unsigned		max_streams:16;
 	unsigned		mult:2;
 	unsigned		maxburst:5;
 	u8			address;
-	u16			maxpacket;
-	u16			maxpacket_limit;
-	u16			max_streams;
+	const struct usb_endpoint_descriptor	*desc;
+	const struct usb_ss_ep_comp_descriptor	*comp_desc;
 };
 
 /*-------------------------------------------------------------------------*/
@@ -713,15 +710,6 @@ static inline int usb_gadget_check_config(struct usb_gadget *gadget)
  * get_interface.  Setting a configuration (or interface) is where
  * endpoints should be activated or (config 0) shut down.
  *
- * The gadget driver's setup() callback does not have to queue a response to
- * ep0 within the setup() call, the driver can do it after setup() returns.
- * The UDC driver must wait until such a response is queued before proceeding
- * with the data/status stages of the control transfer.
- *
- * NOTE: Currently, a number of UDC drivers rely on USB_GADGET_DELAYED_STATUS
- * being returned from the setup() callback, which is a bug. See the comment
- * next to USB_GADGET_DELAYED_STATUS for details.
- *
  * (Note that only the default control endpoint is supported.  Neither
  * hosts nor devices generally support control traffic except to ep0.)
  *
@@ -842,16 +830,6 @@ int usb_gadget_get_string(const struct usb_gadget_strings *table, int id, u8 *bu
 /* check if the given language identifier is valid */
 bool usb_validate_langid(u16 langid);
 
-struct gadget_string {
-	struct config_item item;
-	struct list_head list;
-	char string[USB_MAX_STRING_LEN];
-	struct usb_string usb_string;
-};
-
-#define to_gadget_string(str_item)\
-container_of(str_item, struct gadget_string, item)
-
 /*-------------------------------------------------------------------------*/
 
 /* utility to simplify managing config descriptors */
@@ -859,6 +837,10 @@ container_of(str_item, struct gadget_string, item)
 /* write vector of descriptors into buffer */
 int usb_descriptor_fillbuf(void *, unsigned,
 		const struct usb_descriptor_header **);
+
+/* build config descriptor from single descriptor vector */
+int usb_gadget_config_buf(const struct usb_config_descriptor *config,
+	void *buf, unsigned buflen, const struct usb_descriptor_header **desc);
 
 /* copy a NULL-terminated vector of descriptors */
 struct usb_descriptor_header **usb_copy_descriptors(

@@ -13,6 +13,7 @@
 #include <uapi/linux/audit.h>
 #include <linux/sched.h>
 #include <linux/err.h>
+#include <linux/jump_label.h>
 #include <asm/thread_info.h>	/* for TS_COMPAT */
 #include <asm/unistd.h>
 
@@ -28,6 +29,18 @@ extern long ia32_sys_call(const struct pt_regs *, unsigned int nr);
 extern long x32_sys_call(const struct pt_regs *, unsigned int nr);
 extern long x64_sys_call(const struct pt_regs *, unsigned int nr);
 
+#if defined(CONFIG_X86_X32_ABI)
+#if defined(CONFIG_X86_X32_DISABLED)
+DECLARE_STATIC_KEY_FALSE(x32_enabled_skey);
+#define x32_enabled static_branch_unlikely(&x32_enabled_skey)
+#else
+DECLARE_STATIC_KEY_TRUE(x32_enabled_skey);
+#define x32_enabled static_branch_likely(&x32_enabled_skey)
+#endif
+#else
+#define x32_enabled 0
+#endif
+
 /*
  * Only the low 32 bits of orig_ax are meaningful, so we return int.
  * This importantly ignores the high bits on 64-bit, so comparisons
@@ -36,13 +49,6 @@ extern long x64_sys_call(const struct pt_regs *, unsigned int nr);
 static inline int syscall_get_nr(struct task_struct *task, struct pt_regs *regs)
 {
 	return regs->orig_ax;
-}
-
-static inline void syscall_set_nr(struct task_struct *task,
-				  struct pt_regs *regs,
-				  int nr)
-{
-	regs->orig_ax = nr;
 }
 
 static inline void syscall_rollback(struct task_struct *task,
@@ -97,18 +103,6 @@ static inline void syscall_get_arguments(struct task_struct *task,
 	args[5] = regs->bp;
 }
 
-static inline void syscall_set_arguments(struct task_struct *task,
-					 struct pt_regs *regs,
-					 const unsigned long *args)
-{
-	regs->bx = args[0];
-	regs->cx = args[1];
-	regs->dx = args[2];
-	regs->si = args[3];
-	regs->di = args[4];
-	regs->bp = args[5];
-}
-
 static inline int syscall_get_arch(struct task_struct *task)
 {
 	return AUDIT_ARCH_I386;
@@ -140,30 +134,6 @@ static inline void syscall_get_arguments(struct task_struct *task,
 	}
 }
 
-static inline void syscall_set_arguments(struct task_struct *task,
-					 struct pt_regs *regs,
-					 const unsigned long *args)
-{
-# ifdef CONFIG_IA32_EMULATION
-	if (task->thread_info.status & TS_COMPAT) {
-		regs->bx = *args++;
-		regs->cx = *args++;
-		regs->dx = *args++;
-		regs->si = *args++;
-		regs->di = *args++;
-		regs->bp = *args;
-	} else
-# endif
-	{
-		regs->di = *args++;
-		regs->si = *args++;
-		regs->dx = *args++;
-		regs->r10 = *args++;
-		regs->r8 = *args++;
-		regs->r9 = *args;
-	}
-}
-
 static inline int syscall_get_arch(struct task_struct *task)
 {
 	/* x32 tasks should be considered AUDIT_ARCH_X86_64. */
@@ -172,13 +142,11 @@ static inline int syscall_get_arch(struct task_struct *task)
 		? AUDIT_ARCH_I386 : AUDIT_ARCH_X86_64;
 }
 
-bool do_syscall_64(struct pt_regs *regs, int nr);
+void do_syscall_64(struct pt_regs *regs, int nr);
+void do_int80_syscall_32(struct pt_regs *regs);
+long do_fast_syscall_32(struct pt_regs *regs);
 void do_int80_emulation(struct pt_regs *regs);
 
 #endif	/* CONFIG_X86_32 */
-
-void do_int80_syscall_32(struct pt_regs *regs);
-bool do_fast_syscall_32(struct pt_regs *regs);
-bool do_SYSENTER_32(struct pt_regs *regs);
 
 #endif	/* _ASM_X86_SYSCALL_H */

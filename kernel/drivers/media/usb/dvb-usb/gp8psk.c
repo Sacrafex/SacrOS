@@ -131,18 +131,13 @@ static int gp8psk_load_bcm4500fw(struct dvb_usb_device *d)
 	const u8 *ptr;
 	u8 *buf;
 	if ((ret = request_firmware(&fw, bcm4500_firmware,
-					&d->udev->dev)) != 0) {
-		err("did not find the bcm4500 firmware file '%s' (status %d). You can use <kernel_dir>/scripts/get_dvb_firmware to get the firmware",
-			bcm4500_firmware,ret);
+					&d->udev->dev)) != 0)
 		return ret;
-	}
 
 	ret = -EINVAL;
 
 	if (gp8psk_usb_out_op(d, LOAD_BCM4500,1,0,NULL, 0))
 		goto out_rel_fw;
-
-	info("downloading bcm4500 firmware from file '%s'",bcm4500_firmware);
 
 	ptr = fw->data;
 	buf = kmalloc(64, GFP_KERNEL);
@@ -287,7 +282,7 @@ static int gp8psk_frontend_attach(struct dvb_usb_adapter *adap)
 	int id = le16_to_cpu(d->udev->descriptor.idProduct);
 	int is_rev1;
 
-	is_rev1 = id == USB_PID_GENPIX_8PSK_REV_1_WARM;
+	is_rev1 = (id == USB_PID_GENPIX_8PSK_REV_1_WARM) ? true : false;
 
 	adap->fe_adap[0].fe = dvb_attach(gp8psk_fe_attach,
 					 &gp8psk_fe_ops, d, is_rev1);
@@ -319,7 +314,7 @@ enum {
 	GENPIX_SKYWALKER_CW3K,
 };
 
-static const struct usb_device_id gp8psk_usb_table[] = {
+static struct usb_device_id gp8psk_usb_table[] = {
 	DVB_USB_DEV(GENPIX, GENPIX_8PSK_REV_1_COLD),
 	DVB_USB_DEV(GENPIX, GENPIX_8PSK_REV_1_WARM),
 	DVB_USB_DEV(GENPIX, GENPIX_8PSK_REV_2),

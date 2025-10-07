@@ -39,7 +39,7 @@ static int eeh_result_priority(enum pci_ers_result result)
 	case PCI_ERS_RESULT_NEED_RESET:
 		return 6;
 	default:
-		WARN_ONCE(1, "Unknown pci_ers_result value: %d\n", result);
+		WARN_ONCE(1, "Unknown pci_ers_result value: %d\n", (int)result);
 		return 0;
 	}
 };
@@ -60,7 +60,7 @@ static const char *pci_ers_result_name(enum pci_ers_result result)
 	case PCI_ERS_RESULT_NO_AER_DRIVER:
 		return "no AER driver";
 	default:
-		WARN_ONCE(1, "Unknown result type: %d\n", result);
+		WARN_ONCE(1, "Unknown result type: %d\n", (int)result);
 		return "unknown";
 	}
 };
@@ -869,18 +869,9 @@ void eeh_handle_normal_event(struct eeh_pe *pe)
 				devices++;
 
 	if (!devices) {
-		pr_warn("EEH: Frozen PHB#%x-PE#%x is empty!\n",
+		pr_debug("EEH: Frozen PHB#%x-PE#%x is empty!\n",
 			pe->phb->global_number, pe->addr);
-		/*
-		 * The device is removed, tear down its state, on powernv
-		 * hotplug driver would take care of it but not on pseries,
-		 * permanently disable the card as it is hot removed.
-		 *
-		 * In the case of powernv, note that the removal of device
-		 * is covered by pci rescan lock, so no problem even if hotplug
-		 * driver attempts to remove the device.
-		 */
-		goto recover_failed;
+		goto out; /* nothing to recover */
 	}
 
 	/* Log the event */
@@ -911,7 +902,7 @@ void eeh_handle_normal_event(struct eeh_pe *pe)
 		/* FIXME: Use the same format as dump_stack() */
 		pr_err("EEH: Call Trace:\n");
 		for (i = 0; i < pe->trace_entries; i++)
-			pr_err("EEH: [%p] %pS\n", ptrs[i], ptrs[i]);
+			pr_err("EEH: [%pK] %pS\n", ptrs[i], ptrs[i]);
 
 		pe->trace_entries = 0;
 	}
@@ -1078,10 +1069,10 @@ recover_failed:
 	eeh_slot_error_detail(pe, EEH_LOG_PERM);
 
 	/* Notify all devices that they're about to go down. */
+	eeh_set_channel_state(pe, pci_channel_io_perm_failure);
 	eeh_set_irq_state(pe, false);
 	eeh_pe_report("error_detected(permanent failure)", pe,
 		      eeh_report_failure, NULL);
-	eeh_set_channel_state(pe, pci_channel_io_perm_failure);
 
 	/* Mark the PE to be removed permanently */
 	eeh_pe_state_mark(pe, EEH_PE_REMOVED);
@@ -1210,10 +1201,10 @@ void eeh_handle_special_event(void)
 
 			/* Notify all devices to be down */
 			eeh_pe_state_clear(pe, EEH_PE_PRI_BUS, true);
+			eeh_set_channel_state(pe, pci_channel_io_perm_failure);
 			eeh_pe_report(
 				"error_detected(permanent failure)", pe,
 				eeh_report_failure, NULL);
-			eeh_set_channel_state(pe, pci_channel_io_perm_failure);
 
 			list_for_each_entry(hose, &hose_list, list_node) {
 				phb_pe = eeh_phb_pe_get(hose);

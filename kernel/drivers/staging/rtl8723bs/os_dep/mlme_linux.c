@@ -5,11 +5,12 @@
  *
  ******************************************************************************/
 #include <drv_types.h>
+#include <rtw_debug.h>
 
 static void _dynamic_check_timer_handler(struct timer_list *t)
 {
 	struct adapter *adapter =
-		timer_container_of(adapter, t, mlmepriv.dynamic_chk_timer);
+		from_timer(adapter, t, mlmepriv.dynamic_chk_timer);
 
 	rtw_dynamic_check_timer_handler(adapter);
 
@@ -19,7 +20,7 @@ static void _dynamic_check_timer_handler(struct timer_list *t)
 static void _rtw_set_scan_deny_timer_hdl(struct timer_list *t)
 {
 	struct adapter *adapter =
-		timer_container_of(adapter, t, mlmepriv.set_scan_deny_timer);
+		from_timer(adapter, t, mlmepriv.set_scan_deny_timer);
 
 	rtw_clear_scan_deny(adapter);
 }

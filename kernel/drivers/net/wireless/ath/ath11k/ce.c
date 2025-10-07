@@ -1,11 +1,9 @@
 // SPDX-License-Identifier: BSD-3-Clause-Clear
 /*
  * Copyright (c) 2018-2019 The Linux Foundation. All rights reserved.
- * Copyright (c) 2021-2023 Qualcomm Innovation Center, Inc. All rights reserved.
- * Copyright (c) Qualcomm Technologies, Inc. and/or its subsidiaries.
+ * Copyright (c) 2021, Qualcomm Innovation Center, Inc. All rights reserved.
  */
 
-#include <linux/export.h>
 #include "dp_rx.h"
 #include "debug.h"
 #include "hif.h"
@@ -440,7 +438,7 @@ static void ath11k_ce_recv_process_cb(struct ath11k_ce_pipe *pipe)
 	}
 
 	while ((skb = __skb_dequeue(&list))) {
-		ath11k_dbg(ab, ATH11K_DBG_CE, "rx ce pipe %d len %d\n",
+		ath11k_dbg(ab, ATH11K_DBG_AHB, "rx ce pipe %d len %d\n",
 			   pipe->pipe_num, skb->len);
 		pipe->recv_cb(ab, skb);
 	}
@@ -518,7 +516,7 @@ static void ath11k_ce_tx_process_cb(struct ath11k_ce_pipe *pipe)
 	}
 
 	while ((skb = __skb_dequeue(&list))) {
-		ath11k_dbg(ab, ATH11K_DBG_CE, "tx ce pipe %d len %d\n",
+		ath11k_dbg(ab, ATH11K_DBG_AHB, "tx ce pipe %d len %d\n",
 			   pipe->pipe_num, skb->len);
 		pipe->send_cb(ab, skb);
 	}
@@ -554,7 +552,7 @@ static int ath11k_ce_init_ring(struct ath11k_base *ab,
 			       struct ath11k_ce_ring *ce_ring,
 			       int ce_id, enum hal_ring_type type)
 {
-	struct hal_srng_params params = {};
+	struct hal_srng_params params = { 0 };
 	int ret;
 
 	params.ring_base_paddr = ce_ring->base_addr_ce_space;
@@ -906,7 +904,7 @@ EXPORT_SYMBOL(ath11k_ce_rx_post_buf);
 
 void ath11k_ce_rx_replenish_retry(struct timer_list *t)
 {
-	struct ath11k_base *ab = timer_container_of(ab, t, rx_replenish_retry);
+	struct ath11k_base *ab = from_timer(ab, t, rx_replenish_retry);
 
 	ath11k_ce_rx_post_buf(ab);
 }

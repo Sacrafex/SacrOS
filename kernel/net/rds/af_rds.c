@@ -598,7 +598,7 @@ static int rds_connect(struct socket *sock, struct sockaddr *uaddr,
 		}
 
 		if (addr_type & IPV6_ADDR_LINKLOCAL) {
-			/* If socket is already bound to a link local address,
+			/* If socket is arleady bound to a link local address,
 			 * the peer address must be on the same link.
 			 */
 			if (sin6->sin6_scope_id == 0 ||
@@ -653,6 +653,7 @@ static const struct proto_ops rds_proto_ops = {
 	.sendmsg =	rds_sendmsg,
 	.recvmsg =	rds_recvmsg,
 	.mmap =		sock_no_mmap,
+	.sendpage =	sock_no_sendpage,
 };
 
 static void rds_sock_destruct(struct sock *sk)
@@ -959,4 +960,4 @@ MODULE_DESCRIPTION("RDS: Reliable Datagram Sockets"
 		   " v" DRV_VERSION " (" DRV_RELDATE ")");
 MODULE_VERSION(DRV_VERSION);
 MODULE_LICENSE("Dual BSD/GPL");
-MODULE_ALIAS_NETPROTO(PF_RDS);
+/* MODULE_ALIAS_NETPROTO(PF_RDS); */

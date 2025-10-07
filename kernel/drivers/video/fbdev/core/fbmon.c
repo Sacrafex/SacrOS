@@ -26,8 +26,6 @@
  * for more details.
  *
  */
-
-#include <linux/export.h>
 #include <linux/fb.h>
 #include <linux/module.h>
 #include <linux/pci.h>
@@ -1052,7 +1050,7 @@ static u32 fb_get_vblank(u32 hfreq)
 }
 
 /**
- * fb_get_hblank_by_hfreq - get horizontal blank time given hfreq
+ * fb_get_hblank_by_freq - get horizontal blank time given hfreq
  * @hfreq: horizontal freq
  * @xres: horizontal resolution in pixels
  *
@@ -1484,12 +1482,13 @@ int fb_validate_mode(const struct fb_var_screeninfo *var, struct fb_info *info)
 		-EINVAL : 0;
 }
 
+#if defined(CONFIG_FIRMWARE_EDID) && defined(CONFIG_X86)
+
 /*
  * We need to ensure that the EDID block is only returned for
  * the primary graphics adapter.
  */
 
-#if defined(CONFIG_FIRMWARE_EDID)
 const unsigned char *fb_firmware_edid(struct device *device)
 {
 	struct pci_dev *dev = NULL;

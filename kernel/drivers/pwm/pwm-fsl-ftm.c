@@ -10,7 +10,9 @@
 #include <linux/io.h>
 #include <linux/kernel.h>
 #include <linux/module.h>
-#include <linux/of.h>
+#include <linux/mutex.h>
+#include <linux/of_address.h>
+#include <linux/of_device.h>
 #include <linux/platform_device.h>
 #include <linux/pm.h>
 #include <linux/pwm.h>
@@ -39,6 +41,8 @@ struct fsl_pwm_periodcfg {
 };
 
 struct fsl_pwm_chip {
+	struct pwm_chip chip;
+	struct mutex lock;
 	struct regmap *regmap;
 
 	/* This value is valid iff a pwm is running */
@@ -52,7 +56,7 @@ struct fsl_pwm_chip {
 
 static inline struct fsl_pwm_chip *to_fsl_chip(struct pwm_chip *chip)
 {
-	return pwmchip_get_drvdata(chip);
+	return container_of(chip, struct fsl_pwm_chip, chip);
 }
 
 static void ftm_clear_write_protection(struct fsl_pwm_chip *fpc)
@@ -61,12 +65,13 @@ static void ftm_clear_write_protection(struct fsl_pwm_chip *fpc)
 
 	regmap_read(fpc->regmap, FTM_FMS, &val);
 	if (val & FTM_FMS_WPEN)
-		regmap_set_bits(fpc->regmap, FTM_MODE, FTM_MODE_WPDIS);
+		regmap_update_bits(fpc->regmap, FTM_MODE, FTM_MODE_WPDIS,
+				   FTM_MODE_WPDIS);
 }
 
 static void ftm_set_write_protection(struct fsl_pwm_chip *fpc)
 {
-	regmap_set_bits(fpc->regmap, FTM_FMS, FTM_FMS_WPEN);
+	regmap_update_bits(fpc->regmap, FTM_FMS, FTM_FMS_WPEN, FTM_FMS_WPEN);
 }
 
 static bool fsl_pwm_periodcfg_are_equal(const struct fsl_pwm_periodcfg *a,
@@ -87,8 +92,12 @@ static int fsl_pwm_request(struct pwm_chip *chip, struct pwm_device *pwm)
 	struct fsl_pwm_chip *fpc = to_fsl_chip(chip);
 
 	ret = clk_prepare_enable(fpc->ipg_clk);
-	if (!ret && fpc->soc->has_enable_bits)
-		regmap_set_bits(fpc->regmap, FTM_SC, BIT(pwm->hwpwm + 16));
+	if (!ret && fpc->soc->has_enable_bits) {
+		mutex_lock(&fpc->lock);
+		regmap_update_bits(fpc->regmap, FTM_SC, BIT(pwm->hwpwm + 16),
+				   BIT(pwm->hwpwm + 16));
+		mutex_unlock(&fpc->lock);
+	}
 
 	return ret;
 }
@@ -97,8 +106,12 @@ static void fsl_pwm_free(struct pwm_chip *chip, struct pwm_device *pwm)
 {
 	struct fsl_pwm_chip *fpc = to_fsl_chip(chip);
 
-	if (fpc->soc->has_enable_bits)
-		regmap_clear_bits(fpc->regmap, FTM_SC, BIT(pwm->hwpwm + 16));
+	if (fpc->soc->has_enable_bits) {
+		mutex_lock(&fpc->lock);
+		regmap_update_bits(fpc->regmap, FTM_SC, BIT(pwm->hwpwm + 16),
+				   0);
+		mutex_unlock(&fpc->lock);
+	}
 
 	clk_disable_unprepare(fpc->ipg_clk);
 }
@@ -218,11 +231,10 @@ static bool fsl_pwm_is_other_pwm_enabled(struct fsl_pwm_chip *fpc,
 		return false;
 }
 
-static int fsl_pwm_apply_config(struct pwm_chip *chip,
+static int fsl_pwm_apply_config(struct fsl_pwm_chip *fpc,
 				struct pwm_device *pwm,
 				const struct pwm_state *newstate)
 {
-	struct fsl_pwm_chip *fpc = to_fsl_chip(chip);
 	unsigned int duty;
 	u32 reg_polarity;
 
@@ -230,7 +242,7 @@ static int fsl_pwm_apply_config(struct pwm_chip *chip,
 	bool do_write_period = false;
 
 	if (!fsl_pwm_calculate_period(fpc, newstate->period, &periodcfg)) {
-		dev_err(pwmchip_parent(chip), "failed to calculate new period\n");
+		dev_err(fpc->chip.dev, "failed to calculate new period\n");
 		return -EINVAL;
 	}
 
@@ -244,7 +256,7 @@ static int fsl_pwm_apply_config(struct pwm_chip *chip,
 	 */
 	else if (!fsl_pwm_periodcfg_are_equal(&fpc->period, &periodcfg)) {
 		if (fsl_pwm_is_other_pwm_enabled(fpc, pwm)) {
-			dev_err(pwmchip_parent(chip),
+			dev_err(fpc->chip.dev,
 				"Cannot change period for PWM %u, disable other PWMs first\n",
 				pwm->hwpwm);
 			return -EBUSY;
@@ -296,7 +308,7 @@ static int fsl_pwm_apply(struct pwm_chip *chip, struct pwm_device *pwm,
 {
 	struct fsl_pwm_chip *fpc = to_fsl_chip(chip);
 	struct pwm_state *oldstate = &pwm->state;
-	int ret;
+	int ret = 0;
 
 	/*
 	 * oldstate to newstate : action
@@ -307,36 +319,41 @@ static int fsl_pwm_apply(struct pwm_chip *chip, struct pwm_device *pwm,
 	 * disabled to enabled : update settings + enable
 	 */
 
+	mutex_lock(&fpc->lock);
+
 	if (!newstate->enabled) {
 		if (oldstate->enabled) {
-			regmap_set_bits(fpc->regmap, FTM_OUTMASK,
-					BIT(pwm->hwpwm));
+			regmap_update_bits(fpc->regmap, FTM_OUTMASK,
+					   BIT(pwm->hwpwm), BIT(pwm->hwpwm));
 			clk_disable_unprepare(fpc->clk[FSL_PWM_CLK_CNTEN]);
 			clk_disable_unprepare(fpc->clk[fpc->period.clk_select]);
 		}
 
-		return 0;
+		goto end_mutex;
 	}
 
-	ret = fsl_pwm_apply_config(chip, pwm, newstate);
+	ret = fsl_pwm_apply_config(fpc, pwm, newstate);
 	if (ret)
-		return ret;
+		goto end_mutex;
 
 	/* check if need to enable */
 	if (!oldstate->enabled) {
 		ret = clk_prepare_enable(fpc->clk[fpc->period.clk_select]);
 		if (ret)
-			return ret;
+			goto end_mutex;
 
 		ret = clk_prepare_enable(fpc->clk[FSL_PWM_CLK_CNTEN]);
 		if (ret) {
 			clk_disable_unprepare(fpc->clk[fpc->period.clk_select]);
-			return ret;
+			goto end_mutex;
 		}
 
-		regmap_clear_bits(fpc->regmap, FTM_OUTMASK, BIT(pwm->hwpwm));
+		regmap_update_bits(fpc->regmap, FTM_OUTMASK, BIT(pwm->hwpwm),
+				   0);
 	}
 
+end_mutex:
+	mutex_unlock(&fpc->lock);
 	return ret;
 }
 
@@ -344,6 +361,7 @@ static const struct pwm_ops fsl_pwm_ops = {
 	.request = fsl_pwm_request,
 	.free = fsl_pwm_free,
 	.apply = fsl_pwm_apply,
+	.owner = THIS_MODULE,
 };
 
 static int fsl_pwm_init(struct fsl_pwm_chip *fpc)
@@ -386,17 +404,18 @@ static const struct regmap_config fsl_pwm_regmap_config = {
 
 static int fsl_pwm_probe(struct platform_device *pdev)
 {
-	struct pwm_chip *chip;
 	struct fsl_pwm_chip *fpc;
 	void __iomem *base;
 	int ret;
 
-	chip = devm_pwmchip_alloc(&pdev->dev, 8, sizeof(*fpc));
-	if (IS_ERR(chip))
-		return PTR_ERR(chip);
-	fpc = to_fsl_chip(chip);
+	fpc = devm_kzalloc(&pdev->dev, sizeof(*fpc), GFP_KERNEL);
+	if (!fpc)
+		return -ENOMEM;
+
+	mutex_init(&fpc->lock);
 
 	fpc->soc = of_device_get_match_data(&pdev->dev);
+	fpc->chip.dev = &pdev->dev;
 
 	base = devm_platform_ioremap_resource(pdev, 0);
 	if (IS_ERR(base))
@@ -415,16 +434,16 @@ static int fsl_pwm_probe(struct platform_device *pdev)
 		return PTR_ERR(fpc->clk[FSL_PWM_CLK_SYS]);
 	}
 
-	fpc->clk[FSL_PWM_CLK_FIX] = devm_clk_get(&pdev->dev, "ftm_fix");
+	fpc->clk[FSL_PWM_CLK_FIX] = devm_clk_get(fpc->chip.dev, "ftm_fix");
 	if (IS_ERR(fpc->clk[FSL_PWM_CLK_FIX]))
 		return PTR_ERR(fpc->clk[FSL_PWM_CLK_FIX]);
 
-	fpc->clk[FSL_PWM_CLK_EXT] = devm_clk_get(&pdev->dev, "ftm_ext");
+	fpc->clk[FSL_PWM_CLK_EXT] = devm_clk_get(fpc->chip.dev, "ftm_ext");
 	if (IS_ERR(fpc->clk[FSL_PWM_CLK_EXT]))
 		return PTR_ERR(fpc->clk[FSL_PWM_CLK_EXT]);
 
 	fpc->clk[FSL_PWM_CLK_CNTEN] =
-				devm_clk_get(&pdev->dev, "ftm_cnt_clk_en");
+				devm_clk_get(fpc->chip.dev, "ftm_cnt_clk_en");
 	if (IS_ERR(fpc->clk[FSL_PWM_CLK_CNTEN]))
 		return PTR_ERR(fpc->clk[FSL_PWM_CLK_CNTEN]);
 
@@ -436,15 +455,17 @@ static int fsl_pwm_probe(struct platform_device *pdev)
 	if (IS_ERR(fpc->ipg_clk))
 		fpc->ipg_clk = fpc->clk[FSL_PWM_CLK_SYS];
 
-	chip->ops = &fsl_pwm_ops;
 
-	ret = devm_pwmchip_add(&pdev->dev, chip);
+	fpc->chip.ops = &fsl_pwm_ops;
+	fpc->chip.npwm = 8;
+
+	ret = devm_pwmchip_add(&pdev->dev, &fpc->chip);
 	if (ret < 0) {
 		dev_err(&pdev->dev, "failed to add PWM chip: %d\n", ret);
 		return ret;
 	}
 
-	platform_set_drvdata(pdev, chip);
+	platform_set_drvdata(pdev, fpc);
 
 	return fsl_pwm_init(fpc);
 }
@@ -452,15 +473,14 @@ static int fsl_pwm_probe(struct platform_device *pdev)
 #ifdef CONFIG_PM_SLEEP
 static int fsl_pwm_suspend(struct device *dev)
 {
-	struct pwm_chip *chip = dev_get_drvdata(dev);
-	struct fsl_pwm_chip *fpc = to_fsl_chip(chip);
+	struct fsl_pwm_chip *fpc = dev_get_drvdata(dev);
 	int i;
 
 	regcache_cache_only(fpc->regmap, true);
 	regcache_mark_dirty(fpc->regmap);
 
-	for (i = 0; i < chip->npwm; i++) {
-		struct pwm_device *pwm = &chip->pwms[i];
+	for (i = 0; i < fpc->chip.npwm; i++) {
+		struct pwm_device *pwm = &fpc->chip.pwms[i];
 
 		if (!test_bit(PWMF_REQUESTED, &pwm->flags))
 			continue;
@@ -479,12 +499,11 @@ static int fsl_pwm_suspend(struct device *dev)
 
 static int fsl_pwm_resume(struct device *dev)
 {
-	struct pwm_chip *chip = dev_get_drvdata(dev);
-	struct fsl_pwm_chip *fpc = to_fsl_chip(chip);
+	struct fsl_pwm_chip *fpc = dev_get_drvdata(dev);
 	int i;
 
-	for (i = 0; i < chip->npwm; i++) {
-		struct pwm_device *pwm = &chip->pwms[i];
+	for (i = 0; i < fpc->chip.npwm; i++) {
+		struct pwm_device *pwm = &fpc->chip.pwms[i];
 
 		if (!test_bit(PWMF_REQUESTED, &pwm->flags))
 			continue;

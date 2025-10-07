@@ -404,7 +404,7 @@ error_regulator_disable:
 	return ret;
 }
 
-static void imx8qxp_adc_remove(struct platform_device *pdev)
+static int imx8qxp_adc_remove(struct platform_device *pdev)
 {
 	struct iio_dev *indio_dev = platform_get_drvdata(pdev);
 	struct imx8qxp_adc *adc = iio_priv(indio_dev);
@@ -422,6 +422,8 @@ static void imx8qxp_adc_remove(struct platform_device *pdev)
 
 	pm_runtime_disable(dev);
 	pm_runtime_put_noidle(dev);
+
+	return 0;
 }
 
 static int imx8qxp_adc_runtime_suspend(struct device *dev)
@@ -481,7 +483,7 @@ static DEFINE_RUNTIME_DEV_PM_OPS(imx8qxp_adc_pm_ops,
 
 static const struct of_device_id imx8qxp_adc_match[] = {
 	{ .compatible = "nxp,imx8qxp-adc", },
-	{ }
+	{ /* sentinel */ }
 };
 MODULE_DEVICE_TABLE(of, imx8qxp_adc_match);
 

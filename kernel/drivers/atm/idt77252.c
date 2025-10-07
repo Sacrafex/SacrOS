@@ -1533,7 +1533,7 @@ idt77252_tx(struct idt77252_dev *card)
 static void
 tst_timer(struct timer_list *t)
 {
-	struct idt77252_dev *card = timer_container_of(card, t, tst_timer);
+	struct idt77252_dev *card = from_timer(card, t, tst_timer);
 	unsigned long base, idle, jump;
 	unsigned long flags;
 	u32 pc;
@@ -2075,7 +2075,7 @@ idt77252_rate_logindex(struct idt77252_dev *card, int pcr)
 static void
 idt77252_est_timer(struct timer_list *t)
 {
-	struct rate_estimator *est = timer_container_of(est, t, timer);
+	struct rate_estimator *est = from_timer(est, t, timer);
 	struct vc_map *vc = est->vc;
 	struct idt77252_dev *card = vc->card;
 	unsigned long flags;
@@ -2219,7 +2219,7 @@ idt77252_init_ubr(struct idt77252_dev *card, struct vc_map *vc,
 	}
 	spin_unlock_irqrestore(&vc->lock, flags);
 	if (est) {
-		timer_shutdown_sync(&est->timer);
+		del_timer_sync(&est->timer);
 		kfree(est);
 	}
 
@@ -2536,7 +2536,7 @@ done:
 		vc->tx_vcc = NULL;
 
 		if (vc->estimator) {
-			timer_shutdown(&vc->estimator->timer);
+			del_timer(&vc->estimator->timer);
 			kfree(vc->estimator);
 			vc->estimator = NULL;
 		}
@@ -3771,7 +3771,7 @@ static void __exit idt77252_exit(void)
 		card = idt77252_chain;
 		dev = card->atmdev;
 		idt77252_chain = card->next;
-		timer_shutdown_sync(&card->tst_timer);
+		del_timer_sync(&card->tst_timer);
 
 		if (dev->phy->stop)
 			dev->phy->stop(dev);

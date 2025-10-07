@@ -7,19 +7,18 @@
 #include <linux/interrupt.h>
 #include <linux/irq.h>
 #include <linux/mfd/syscon.h>
-#include <linux/mod_devicetable.h>
 #include <linux/module.h>
+#include <linux/of.h>
+#include <linux/of_address.h>
+#include <linux/of_irq.h>
+#include <linux/pinctrl/machine.h>
+#include <linux/pinctrl/pinconf.h>
+#include <linux/pinctrl/pinconf-generic.h>
+#include <linux/pinctrl/pinctrl.h>
+#include <linux/pinctrl/pinmux.h>
 #include <linux/platform_device.h>
 #include <linux/property.h>
 #include <linux/regmap.h>
-#include <linux/seq_file.h>
-
-#include <linux/pinctrl/consumer.h>
-#include <linux/pinctrl/machine.h>
-#include <linux/pinctrl/pinconf-generic.h>
-#include <linux/pinctrl/pinconf.h>
-#include <linux/pinctrl/pinctrl.h>
-#include <linux/pinctrl/pinmux.h>
 
 /* GCR registers */
 #define NPCM7XX_GCR_PDID	0x00
@@ -80,6 +79,7 @@ struct npcm7xx_gpio {
 	struct gpio_chip	gc;
 	int			irqbase;
 	int			irq;
+	struct irq_chip		irq_chip;
 	u32			pinctrl_id;
 	int (*direction_input)(struct gpio_chip *chip, unsigned int offset);
 	int (*direction_output)(struct gpio_chip *chip, unsigned int offset,
@@ -169,7 +169,7 @@ static int npcmgpio_direction_input(struct gpio_chip *chip, unsigned int offset)
 	struct npcm7xx_gpio *bank = gpiochip_get_data(chip);
 	int ret;
 
-	ret = pinctrl_gpio_direction_input(chip, offset);
+	ret = pinctrl_gpio_direction_input(offset + chip->base);
 	if (ret)
 		return ret;
 
@@ -186,7 +186,7 @@ static int npcmgpio_direction_output(struct gpio_chip *chip,
 	dev_dbg(chip->parent, "gpio_direction_output: offset%d = %x\n", offset,
 		value);
 
-	ret = pinctrl_gpio_direction_output(chip, offset);
+	ret = pinctrl_gpio_direction_output(offset + chip->base);
 	if (ret)
 		return ret;
 
@@ -199,11 +199,17 @@ static int npcmgpio_gpio_request(struct gpio_chip *chip, unsigned int offset)
 	int ret;
 
 	dev_dbg(chip->parent, "gpio_request: offset%d\n", offset);
-	ret = pinctrl_gpio_request(chip, offset);
+	ret = pinctrl_gpio_request(offset + chip->base);
 	if (ret)
 		return ret;
 
 	return bank->request(chip, offset);
+}
+
+static void npcmgpio_gpio_free(struct gpio_chip *chip, unsigned int offset)
+{
+	dev_dbg(chip->parent, "gpio_free: offset%d\n", offset);
+	pinctrl_gpio_free(offset + chip->base);
 }
 
 static void npcmgpio_irq_handler(struct irq_desc *desc)
@@ -231,9 +237,9 @@ static void npcmgpio_irq_handler(struct irq_desc *desc)
 
 static int npcmgpio_set_irq_type(struct irq_data *d, unsigned int type)
 {
-	struct gpio_chip *gc = irq_data_get_irq_chip_data(d);
-	struct npcm7xx_gpio *bank = gpiochip_get_data(gc);
-	unsigned int gpio = BIT(irqd_to_hwirq(d));
+	struct npcm7xx_gpio *bank =
+		gpiochip_get_data(irq_data_get_irq_chip_data(d));
+	unsigned int gpio = BIT(d->hwirq);
 
 	dev_dbg(bank->gc.parent, "setirqtype: %u.%u = %u\n", gpio,
 		d->irq, type);
@@ -279,9 +285,9 @@ static int npcmgpio_set_irq_type(struct irq_data *d, unsigned int type)
 
 static void npcmgpio_irq_ack(struct irq_data *d)
 {
-	struct gpio_chip *gc = irq_data_get_irq_chip_data(d);
-	struct npcm7xx_gpio *bank = gpiochip_get_data(gc);
-	unsigned int gpio = irqd_to_hwirq(d);
+	struct npcm7xx_gpio *bank =
+		gpiochip_get_data(irq_data_get_irq_chip_data(d));
+	unsigned int gpio = d->hwirq;
 
 	dev_dbg(bank->gc.parent, "irq_ack: %u.%u\n", gpio, d->irq);
 	iowrite32(BIT(gpio), bank->base + NPCM7XX_GP_N_EVST);
@@ -290,25 +296,23 @@ static void npcmgpio_irq_ack(struct irq_data *d)
 /* Disable GPIO interrupt */
 static void npcmgpio_irq_mask(struct irq_data *d)
 {
-	struct gpio_chip *gc = irq_data_get_irq_chip_data(d);
-	struct npcm7xx_gpio *bank = gpiochip_get_data(gc);
-	unsigned int gpio = irqd_to_hwirq(d);
+	struct npcm7xx_gpio *bank =
+		gpiochip_get_data(irq_data_get_irq_chip_data(d));
+	unsigned int gpio = d->hwirq;
 
 	/* Clear events */
 	dev_dbg(bank->gc.parent, "irq_mask: %u.%u\n", gpio, d->irq);
 	iowrite32(BIT(gpio), bank->base + NPCM7XX_GP_N_EVENC);
-	gpiochip_disable_irq(gc, gpio);
 }
 
 /* Enable GPIO interrupt */
 static void npcmgpio_irq_unmask(struct irq_data *d)
 {
-	struct gpio_chip *gc = irq_data_get_irq_chip_data(d);
-	struct npcm7xx_gpio *bank = gpiochip_get_data(gc);
-	unsigned int gpio = irqd_to_hwirq(d);
+	struct npcm7xx_gpio *bank =
+		gpiochip_get_data(irq_data_get_irq_chip_data(d));
+	unsigned int gpio = d->hwirq;
 
 	/* Enable events */
-	gpiochip_enable_irq(gc, gpio);
 	dev_dbg(bank->gc.parent, "irq_unmask: %u.%u\n", gpio, d->irq);
 	iowrite32(BIT(gpio), bank->base + NPCM7XX_GP_N_EVENS);
 }
@@ -316,7 +320,7 @@ static void npcmgpio_irq_unmask(struct irq_data *d)
 static unsigned int npcmgpio_irq_startup(struct irq_data *d)
 {
 	struct gpio_chip *gc = irq_data_get_irq_chip_data(d);
-	unsigned int gpio = irqd_to_hwirq(d);
+	unsigned int gpio = d->hwirq;
 
 	/* active-high, input, clear interrupt, enable interrupt */
 	dev_dbg(gc->parent, "startup: %u.%u\n", gpio, d->irq);
@@ -334,8 +338,6 @@ static const struct irq_chip npcmgpio_irqchip = {
 	.irq_mask = npcmgpio_irq_mask,
 	.irq_set_type = npcmgpio_set_irq_type,
 	.irq_startup = npcmgpio_irq_startup,
-	.flags = IRQCHIP_IMMUTABLE,
-	GPIOCHIP_IRQ_RESOURCE_HELPERS,
 };
 
 /* pinmux handing in the pinctrl driver*/
@@ -502,6 +504,17 @@ static const int lkgpo2_pins[] = { 9 };
 
 static const int nprd_smi_pins[] = { 190 };
 
+/*
+ * pin:	     name, number
+ * group:    name, npins,   pins
+ * function: name, ngroups, groups
+ */
+struct npcm7xx_group {
+	const char *name;
+	const unsigned int *pins;
+	int npins;
+};
+
 #define NPCM7XX_GRPS \
 	NPCM7XX_GRP(smb0), \
 	NPCM7XX_GRP(smb0b), \
@@ -629,14 +642,22 @@ enum {
 #undef NPCM7XX_GRP
 };
 
-static struct pingroup npcm7xx_groups[] = {
-#define NPCM7XX_GRP(x) PINCTRL_PINGROUP(#x, x ## _pins, ARRAY_SIZE(x ## _pins))
+static struct npcm7xx_group npcm7xx_groups[] = {
+#define NPCM7XX_GRP(x) { .name = #x, .pins = x ## _pins, \
+			.npins = ARRAY_SIZE(x ## _pins) }
 	NPCM7XX_GRPS
 #undef NPCM7XX_GRP
 };
 
 #define NPCM7XX_SFUNC(a) NPCM7XX_FUNC(a, #a)
 #define NPCM7XX_FUNC(a, b...) static const char *a ## _grp[] = { b }
+#define NPCM7XX_MKFUNC(nm) { .name = #nm, .ngroups = ARRAY_SIZE(nm ## _grp), \
+			.groups = nm ## _grp }
+struct npcm7xx_func {
+	const char *name;
+	const unsigned int ngroups;
+	const char *const *groups;
+};
 
 NPCM7XX_SFUNC(smb0);
 NPCM7XX_SFUNC(smb0b);
@@ -755,8 +776,7 @@ NPCM7XX_SFUNC(lkgpo2);
 NPCM7XX_SFUNC(nprd_smi);
 
 /* Function names */
-static struct pinfunction npcm7xx_funcs[] = {
-#define NPCM7XX_MKFUNC(nm) PINCTRL_PINFUNCTION(#nm, nm ## _grp, ARRAY_SIZE(nm ## _grp))
+static struct npcm7xx_func npcm7xx_funcs[] = {
 	NPCM7XX_MKFUNC(smb0),
 	NPCM7XX_MKFUNC(smb0b),
 	NPCM7XX_MKFUNC(smb0c),
@@ -872,7 +892,6 @@ static struct pinfunction npcm7xx_funcs[] = {
 	NPCM7XX_MKFUNC(lkgpo1),
 	NPCM7XX_MKFUNC(lkgpo2),
 	NPCM7XX_MKFUNC(nprd_smi),
-#undef NPCM7XX_MKFUNC
 };
 
 #define NPCM7XX_PINCFG(a, b, c, d, e, f, g, h, i, j, k) \
@@ -1563,6 +1582,19 @@ static int npcm7xx_get_group_pins(struct pinctrl_dev *pctldev,
 	return 0;
 }
 
+static int npcm7xx_dt_node_to_map(struct pinctrl_dev *pctldev,
+				  struct device_node *np_config,
+				  struct pinctrl_map **map,
+				  u32 *num_maps)
+{
+	struct npcm7xx_pinctrl *npcm = pinctrl_dev_get_drvdata(pctldev);
+
+	dev_dbg(npcm->dev, "dt_node_to_map: %s\n", np_config->name);
+	return pinconf_generic_dt_node_to_map(pctldev, np_config,
+					      map, num_maps,
+					      PIN_MAP_TYPE_INVALID);
+}
+
 static void npcm7xx_dt_free_map(struct pinctrl_dev *pctldev,
 				struct pinctrl_map *map, u32 num_maps)
 {
@@ -1574,7 +1606,7 @@ static const struct pinctrl_ops npcm7xx_pinctrl_ops = {
 	.get_group_name = npcm7xx_get_group_name,
 	.get_group_pins = npcm7xx_get_group_pins,
 	.pin_dbg_show = npcm7xx_pin_dbg_show,
-	.dt_node_to_map = pinconf_generic_dt_node_to_map_all,
+	.dt_node_to_map = npcm7xx_dt_node_to_map,
 	.dt_free_map = npcm7xx_dt_free_map,
 };
 
@@ -1771,8 +1803,8 @@ static int npcm7xx_config_set_one(struct npcm7xx_pinctrl *npcm,
 		bank->direction_input(&bank->gc, pin % bank->gc.ngpio);
 		break;
 	case PIN_CONFIG_OUTPUT:
-		bank->direction_output(&bank->gc, pin % bank->gc.ngpio, arg);
 		iowrite32(gpio, bank->base + NPCM7XX_GP_N_OES);
+		bank->direction_output(&bank->gc, pin % bank->gc.ngpio, arg);
 		break;
 	case PIN_CONFIG_DRIVE_PUSH_PULL:
 		npcm_gpio_clr(&bank->gc, bank->base + NPCM7XX_GP_N_OTYP, gpio);
@@ -1817,7 +1849,7 @@ static const struct pinconf_ops npcm7xx_pinconf_ops = {
 };
 
 /* pinctrl_desc */
-static const struct pinctrl_desc npcm7xx_pinctrl_desc = {
+static struct pinctrl_desc npcm7xx_pinctrl_desc = {
 	.name = "npcm7xx-pinctrl",
 	.pins = npcm7xx_pins,
 	.npins = ARRAY_SIZE(npcm7xx_pins),
@@ -1830,13 +1862,22 @@ static const struct pinctrl_desc npcm7xx_pinctrl_desc = {
 static int npcm7xx_gpio_of(struct npcm7xx_pinctrl *pctrl)
 {
 	int ret = -ENXIO;
+	struct resource res;
 	struct device *dev = pctrl->dev;
 	struct fwnode_reference_args args;
 	struct fwnode_handle *child;
 	int id = 0;
 
 	for_each_gpiochip_node(dev, child) {
-		pctrl->gpio_bank[id].base = fwnode_iomap(child, 0);
+		struct device_node *np = to_of_node(child);
+
+		ret = of_address_to_resource(np, 0, &res);
+		if (ret < 0) {
+			dev_err(dev, "Resource fail for GPIO bank %u\n", id);
+			return ret;
+		}
+
+		pctrl->gpio_bank[id].base = ioremap(res.start, resource_size(&res));
 		if (!pctrl->gpio_bank[id].base)
 			return -EINVAL;
 
@@ -1858,12 +1899,13 @@ static int npcm7xx_gpio_of(struct npcm7xx_pinctrl *pctrl)
 			return ret;
 		}
 
-		ret = fwnode_irq_get(child, 0);
+		ret = irq_of_parse_and_map(np, 0);
 		if (!ret) {
 			dev_err(dev, "No IRQ for GPIO bank %u\n", id);
 			return -EINVAL;
 		}
 		pctrl->gpio_bank[id].irq = ret;
+		pctrl->gpio_bank[id].irq_chip = npcmgpio_irqchip;
 		pctrl->gpio_bank[id].irqbase = id * NPCM7XX_GPIO_PER_BANK;
 		pctrl->gpio_bank[id].pinctrl_id = args.args[0];
 		pctrl->gpio_bank[id].gc.base = args.args[1];
@@ -1882,7 +1924,7 @@ static int npcm7xx_gpio_of(struct npcm7xx_pinctrl *pctrl)
 		pctrl->gpio_bank[id].gc.direction_output = npcmgpio_direction_output;
 		pctrl->gpio_bank[id].request = pctrl->gpio_bank[id].gc.request;
 		pctrl->gpio_bank[id].gc.request = npcmgpio_gpio_request;
-		pctrl->gpio_bank[id].gc.free = pinctrl_gpio_free;
+		pctrl->gpio_bank[id].gc.free = npcmgpio_gpio_free;
 		id++;
 	}
 
@@ -1898,7 +1940,7 @@ static int npcm7xx_gpio_register(struct npcm7xx_pinctrl *pctrl)
 		struct gpio_irq_chip *girq;
 
 		girq = &pctrl->gpio_bank[id].gc.irq;
-		gpio_irq_chip_set_chip(girq, &npcmgpio_irqchip);
+		girq->chip = &pctrl->gpio_bank[id].irq_chip;
 		girq->parent_handler = npcmgpio_irq_handler;
 		girq->num_parents = 1;
 		girq->parents = devm_kcalloc(pctrl->dev, 1,
@@ -2003,6 +2045,7 @@ static int __init npcm7xx_pinctrl_register(void)
 }
 arch_initcall(npcm7xx_pinctrl_register);
 
+MODULE_LICENSE("GPL v2");
 MODULE_AUTHOR("jordan_hargrave@dell.com");
 MODULE_AUTHOR("tomer.maimon@nuvoton.com");
 MODULE_DESCRIPTION("Nuvoton NPCM7XX Pinctrl and GPIO driver");

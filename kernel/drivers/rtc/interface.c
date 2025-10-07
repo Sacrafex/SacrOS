@@ -205,7 +205,7 @@ static int rtc_read_alarm_internal(struct rtc_device *rtc,
 
 	mutex_unlock(&rtc->ops_lock);
 
-	trace_rtc_read_alarm(err?0:rtc_tm_to_time64(&alarm->time), err);
+	trace_rtc_read_alarm(rtc_tm_to_time64(&alarm->time), err);
 	return err;
 }
 
@@ -256,7 +256,7 @@ int __rtc_read_alarm(struct rtc_device *rtc, struct rtc_wkalrm *alarm)
 	 *
 	 * This could all instead be done in the lower level driver,
 	 * but since more than one lower level RTC implementation needs it,
-	 * then it's probably best to do it here instead of there..
+	 * then it's probably best best to do it here instead of there..
 	 */
 
 	/* Get the "before" timestamp */
@@ -375,7 +375,7 @@ int __rtc_read_alarm(struct rtc_device *rtc, struct rtc_wkalrm *alarm)
 	err = rtc_valid_tm(&alarm->time);
 
 done:
-	if (err && alarm->enabled)
+	if (err)
 		dev_warn(&rtc->dev, "invalid alarm value: %ptR\n",
 			 &alarm->time);
 	else
@@ -697,7 +697,7 @@ struct rtc_device *rtc_class_open(const char *name)
 	struct device *dev;
 	struct rtc_device *rtc = NULL;
 
-	dev = class_find_device_by_name(&rtc_class, name);
+	dev = class_find_device_by_name(rtc_class, name);
 	if (dev)
 		rtc = to_rtc_device(dev);
 

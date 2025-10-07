@@ -558,6 +558,8 @@ static const struct vb2_ops dw100_qops = {
 	.buf_queue	 = dw100_buf_queue,
 	.start_streaming = dw100_start_streaming,
 	.stop_streaming  = dw100_stop_streaming,
+	.wait_prepare	 = vb2_ops_wait_prepare,
+	.wait_finish	 = vb2_ops_wait_finish,
 };
 
 static int dw100_m2m_queue_init(void *priv, struct vb2_queue *src_vq,
@@ -961,9 +963,9 @@ static int dw100_s_selection(struct file *file, void *fh,
 	src_q_data = dw100_get_q_data(ctx, V4L2_BUF_TYPE_VIDEO_OUTPUT_MPLANE);
 
 	dev_dbg(&ctx->dw_dev->pdev->dev,
-		">>> Buffer Type: %u Target: %u Rect: (%d,%d)/%ux%u\n",
+		">>> Buffer Type: %u Target: %u Rect: %ux%u@%d.%d\n",
 		sel->type, sel->target,
-		sel->r.left, sel->r.top, sel->r.width, sel->r.height);
+		sel->r.width, sel->r.height, sel->r.left, sel->r.top);
 
 	switch (sel->target) {
 	case V4L2_SEL_TGT_CROP:
@@ -1025,9 +1027,9 @@ static int dw100_s_selection(struct file *file, void *fh,
 	}
 
 	dev_dbg(&ctx->dw_dev->pdev->dev,
-		"<<< Buffer Type: %u Target: %u Rect: (%d,%d)/%ux%u\n",
+		"<<< Buffer Type: %u Target: %u Rect: %ux%u@%d.%d\n",
 		sel->type, sel->target,
-		sel->r.left, sel->r.top, sel->r.width, sel->r.height);
+		sel->r.width, sel->r.height, sel->r.left, sel->r.top);
 
 	return 0;
 }
@@ -1309,7 +1311,7 @@ static void dw100_hw_set_destination(struct dw100_device *dw_dev,
 	}
 
 	dev_dbg(&dw_dev->pdev->dev,
-		"Set HW destination registers for %ux%u - stride %u, pixfmt: %p4cc, dma:%pad\n",
+		"Set HW source registers for %ux%u - stride %u, pixfmt: %p4cc, dma:%pad\n",
 		width, height, stride, &fourcc, &addr_y);
 
 	/* Pixel Format */
@@ -1530,6 +1532,7 @@ static int dw100_probe(struct platform_device *pdev)
 {
 	struct dw100_device *dw_dev;
 	struct video_device *vfd;
+	struct resource *res;
 	int ret, irq;
 
 	dw_dev = devm_kzalloc(&pdev->dev, sizeof(*dw_dev), GFP_KERNEL);
@@ -1544,7 +1547,8 @@ static int dw100_probe(struct platform_device *pdev)
 	}
 	dw_dev->num_clks = ret;
 
-	dw_dev->mmio = devm_platform_get_and_ioremap_resource(pdev, 0, NULL);
+	res = platform_get_resource(pdev, IORESOURCE_MEM, 0);
+	dw_dev->mmio = devm_ioremap_resource(&pdev->dev, res);
 	if (IS_ERR(dw_dev->mmio))
 		return PTR_ERR(dw_dev->mmio);
 
@@ -1567,7 +1571,7 @@ static int dw100_probe(struct platform_device *pdev)
 			       dev_name(&pdev->dev), dw_dev);
 	if (ret < 0) {
 		dev_err(&pdev->dev, "Failed to request irq: %d\n", ret);
-		goto err_pm;
+		return ret;
 	}
 
 	ret = v4l2_device_register(&pdev->dev, &dw_dev->v4l2_dev);
@@ -1629,7 +1633,7 @@ err_pm:
 	return ret;
 }
 
-static void dw100_remove(struct platform_device *pdev)
+static int dw100_remove(struct platform_device *pdev)
 {
 	struct dw100_device *dw_dev = platform_get_drvdata(pdev);
 
@@ -1645,6 +1649,8 @@ static void dw100_remove(struct platform_device *pdev)
 	mutex_destroy(dw_dev->vfd.lock);
 	v4l2_m2m_release(dw_dev->m2m_dev);
 	v4l2_device_unregister(&dw_dev->v4l2_dev);
+
+	return 0;
 }
 
 static int __maybe_unused dw100_runtime_suspend(struct device *dev)

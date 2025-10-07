@@ -31,14 +31,13 @@
 #include <linux/interrupt.h>
 #include <linux/io.h>
 #include <linux/irq.h>
+#include <linux/mfd/tmio.h>
 #include <linux/mmc/card.h>
 #include <linux/mmc/host.h>
 #include <linux/mmc/mmc.h>
 #include <linux/mmc/slot-gpio.h>
 #include <linux/module.h>
-#include <linux/of.h>
 #include <linux/pagemap.h>
-#include <linux/platform_data/tmio.h>
 #include <linux/platform_device.h>
 #include <linux/pm_qos.h>
 #include <linux/pm_runtime.h>
@@ -160,6 +159,7 @@ static void tmio_mmc_enable_sdio_irq(struct mmc_host *mmc, int enable)
 		sd_ctrl_write16(host, CTL_SDIO_IRQ_MASK, host->sdio_irq_mask);
 
 		host->sdio_irq_enabled = false;
+		pm_runtime_mark_last_busy(mmc_dev(mmc));
 		pm_runtime_put_autosuspend(mmc_dev(mmc));
 	}
 }
@@ -296,6 +296,7 @@ static int tmio_mmc_start_command(struct tmio_mmc_host *host,
 	switch (mmc_resp_type(cmd)) {
 	case MMC_RSP_NONE: c |= RESP_NONE; break;
 	case MMC_RSP_R1:
+	case MMC_RSP_R1_NO_CRC:
 			   c |= RESP_R1;   break;
 	case MMC_RSP_R1B:  c |= RESP_R1B;  break;
 	case MMC_RSP_R2:   c |= RESP_R2;   break;
@@ -413,6 +414,7 @@ static void tmio_mmc_pio_irq(struct tmio_mmc_host *host)
 	void *sg_virt;
 	unsigned short *buf;
 	unsigned int count;
+	unsigned long flags;
 
 	if (host->dma_on) {
 		pr_err("PIO IRQ in DMA mode!\n");
@@ -422,8 +424,8 @@ static void tmio_mmc_pio_irq(struct tmio_mmc_host *host)
 		return;
 	}
 
-	sg_virt = kmap_local_page(sg_page(host->sg_ptr));
-	buf = (unsigned short *)(sg_virt + host->sg_ptr->offset + host->sg_off);
+	sg_virt = tmio_mmc_kmap_atomic(host->sg_ptr, &flags);
+	buf = (unsigned short *)(sg_virt + host->sg_off);
 
 	count = host->sg_ptr->length - host->sg_off;
 	if (count > data->blksz)
@@ -437,7 +439,7 @@ static void tmio_mmc_pio_irq(struct tmio_mmc_host *host)
 
 	host->sg_off += count;
 
-	kunmap_local(sg_virt);
+	tmio_mmc_kunmap_atomic(host->sg_ptr, &flags, sg_virt);
 
 	if (host->sg_off == host->sg_ptr->length)
 		tmio_mmc_next_sg(host);
@@ -446,11 +448,11 @@ static void tmio_mmc_pio_irq(struct tmio_mmc_host *host)
 static void tmio_mmc_check_bounce_buffer(struct tmio_mmc_host *host)
 {
 	if (host->sg_ptr == &host->bounce_sg) {
-		void *sg_virt = kmap_local_page(sg_page(host->sg_orig));
+		unsigned long flags;
+		void *sg_vaddr = tmio_mmc_kmap_atomic(host->sg_orig, &flags);
 
-		memcpy(sg_virt + host->sg_orig->offset, host->bounce_buf,
-		       host->bounce_sg.length);
-		kunmap_local(sg_virt);
+		memcpy(sg_vaddr, host->bounce_buf, host->bounce_sg.length);
+		tmio_mmc_kunmap_atomic(host->sg_orig, &flags, sg_vaddr);
 	}
 }
 
@@ -607,7 +609,7 @@ static void tmio_mmc_cmd_irq(struct tmio_mmc_host *host, unsigned int stat)
 			} else {
 				tmio_mmc_disable_mmc_irqs(host,
 							  TMIO_MASK_READOP);
-				queue_work(system_bh_wq, &host->dma_issue);
+				tasklet_schedule(&host->dma_issue);
 			}
 		} else {
 			if (!host->dma_on) {
@@ -615,7 +617,7 @@ static void tmio_mmc_cmd_irq(struct tmio_mmc_host *host, unsigned int stat)
 			} else {
 				tmio_mmc_disable_mmc_irqs(host,
 							  TMIO_MASK_WRITEOP);
-				queue_work(system_bh_wq, &host->dma_issue);
+				tasklet_schedule(&host->dma_issue);
 			}
 		}
 	} else {
@@ -670,9 +672,6 @@ static bool __tmio_mmc_sdcard_irq(struct tmio_mmc_host *host, int ireg,
 		return true;
 	}
 
-	if (host->dma_ops && host->dma_ops->dma_irq && host->dma_ops->dma_irq(host))
-		return true;
-
 	return false;
 }
 
@@ -695,11 +694,8 @@ static bool __tmio_mmc_sdio_irq(struct tmio_mmc_host *host)
 
 	sd_ctrl_write16(host, CTL_SDIO_STATUS, sdio_status);
 
-	if (mmc->caps & MMC_CAP_SDIO_IRQ && ireg & TMIO_SDIO_STAT_IOIRQ) {
-		if (host->sdio_irq)
-			host->sdio_irq(host);
+	if (mmc->caps & MMC_CAP_SDIO_IRQ && ireg & TMIO_SDIO_STAT_IOIRQ)
 		mmc_signal_sdio_irq(mmc);
-	}
 
 	return ireg;
 }
@@ -882,6 +878,9 @@ static void tmio_mmc_power_on(struct tmio_mmc_host *host, unsigned short vdd)
 
 	/* .set_ios() is returning void, so, no chance to report an error */
 
+	if (host->set_pwr)
+		host->set_pwr(host->pdev, 1);
+
 	if (!IS_ERR(mmc->supply.vmmc)) {
 		ret = mmc_regulator_set_ocr(mmc, mmc->supply.vmmc, vdd);
 		/*
@@ -896,8 +895,8 @@ static void tmio_mmc_power_on(struct tmio_mmc_host *host, unsigned short vdd)
 	 * It seems, VccQ should be switched on after Vcc, this is also what the
 	 * omap_hsmmc.c driver does.
 	 */
-	if (!ret) {
-		ret = mmc_regulator_enable_vqmmc(mmc);
+	if (!IS_ERR(mmc->supply.vqmmc) && !ret) {
+		ret = regulator_enable(mmc->supply.vqmmc);
 		usleep_range(200, 300);
 	}
 
@@ -910,10 +909,14 @@ static void tmio_mmc_power_off(struct tmio_mmc_host *host)
 {
 	struct mmc_host *mmc = host->mmc;
 
-	mmc_regulator_disable_vqmmc(mmc);
+	if (!IS_ERR(mmc->supply.vqmmc))
+		regulator_disable(mmc->supply.vqmmc);
 
 	if (!IS_ERR(mmc->supply.vmmc))
 		mmc_regulator_set_ocr(mmc, mmc->supply.vmmc, 0);
+
+	if (host->set_pwr)
+		host->set_pwr(host->pdev, 0);
 }
 
 static unsigned int tmio_mmc_get_timeout_cycles(struct tmio_mmc_host *host)
@@ -967,7 +970,6 @@ static void tmio_mmc_set_ios(struct mmc_host *mmc, struct mmc_ios *ios)
 		return;
 	}
 
-	/* Disallow new mrqs and work handlers to run */
 	host->mrq = ERR_PTR(-EBUSY);
 
 	spin_unlock_irqrestore(&host->lock, flags);
@@ -1002,9 +1004,8 @@ static void tmio_mmc_set_ios(struct mmc_host *mmc, struct mmc_ios *ios)
 			"%s.%d: IOS interrupted: clk %u, mode %u",
 			current->comm, task_pid_nr(current),
 			ios->clock, ios->power_mode);
-
-	/* Ready for new mrqs */
 	host->mrq = NULL;
+
 	host->clk_cache = ios->clock;
 
 	mutex_unlock(&host->ios_lock);
@@ -1083,7 +1084,7 @@ static void tmio_mmc_of_parse(struct platform_device *pdev,
 	 * For new platforms, please use "disable-wp" instead of
 	 * "toshiba,mmc-wrprotect-disable"
 	 */
-	if (of_property_read_bool(np, "toshiba,mmc-wrprotect-disable"))
+	if (of_get_property(np, "toshiba,mmc-wrprotect-disable", NULL))
 		mmc->caps2 |= MMC_CAP2_NO_WRITE_PROTECT;
 }
 
@@ -1099,7 +1100,7 @@ struct tmio_mmc_host *tmio_mmc_host_alloc(struct platform_device *pdev,
 	if (IS_ERR(ctl))
 		return ERR_CAST(ctl);
 
-	mmc = devm_mmc_alloc_host(&pdev->dev, sizeof(*host));
+	mmc = mmc_alloc_host(sizeof(struct tmio_mmc_host), &pdev->dev);
 	if (!mmc)
 		return ERR_PTR(-ENOMEM);
 
@@ -1112,16 +1113,28 @@ struct tmio_mmc_host *tmio_mmc_host_alloc(struct platform_device *pdev,
 	mmc->ops = &host->ops;
 
 	ret = mmc_of_parse(host->mmc);
-	if (ret)
-		return ERR_PTR(ret);
+	if (ret) {
+		host = ERR_PTR(ret);
+		goto free;
+	}
 
 	tmio_mmc_of_parse(pdev, mmc);
 
 	platform_set_drvdata(pdev, host);
 
 	return host;
+free:
+	mmc_free_host(mmc);
+
+	return host;
 }
 EXPORT_SYMBOL_GPL(tmio_mmc_host_alloc);
+
+void tmio_mmc_host_free(struct tmio_mmc_host *host)
+{
+	mmc_free_host(host->mmc);
+}
+EXPORT_SYMBOL_GPL(tmio_mmc_host_free);
 
 int tmio_mmc_host_probe(struct tmio_mmc_host *_host)
 {
@@ -1142,6 +1155,8 @@ int tmio_mmc_host_probe(struct tmio_mmc_host *_host)
 
 	if (pdata->flags & TMIO_MMC_USE_BUSY_TIMEOUT && !_host->get_timeout_cycles)
 		_host->get_timeout_cycles = tmio_mmc_get_timeout_cycles;
+
+	_host->set_pwr = pdata->set_pwr;
 
 	ret = tmio_mmc_init_ocr(_host);
 	if (ret < 0)
@@ -1166,14 +1181,14 @@ int tmio_mmc_host_probe(struct tmio_mmc_host *_host)
 				  dma_max_mapping_size(&pdev->dev));
 	mmc->max_seg_size = mmc->max_req_size;
 
-	if (mmc_host_can_gpio_ro(mmc))
+	if (mmc_can_gpio_ro(mmc))
 		_host->ops.get_ro = mmc_gpio_get_ro;
 
-	if (mmc_host_can_gpio_cd(mmc))
+	if (mmc_can_gpio_cd(mmc))
 		_host->ops.get_cd = mmc_gpio_get_cd;
 
 	/* must be set before tmio_mmc_reset() */
-	_host->native_hotplug = !(mmc_host_can_gpio_cd(mmc) ||
+	_host->native_hotplug = !(mmc_can_gpio_cd(mmc) ||
 				  mmc->caps & MMC_CAP_NEEDS_POLL ||
 				  !mmc_card_is_removable(mmc));
 
@@ -1300,5 +1315,4 @@ int tmio_mmc_host_runtime_resume(struct device *dev)
 EXPORT_SYMBOL_GPL(tmio_mmc_host_runtime_resume);
 #endif
 
-MODULE_DESCRIPTION("TMIO MMC core driver");
 MODULE_LICENSE("GPL v2");

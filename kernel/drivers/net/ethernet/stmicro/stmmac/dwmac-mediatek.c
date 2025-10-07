@@ -7,8 +7,8 @@
 #include <linux/mfd/syscon.h>
 #include <linux/module.h>
 #include <linux/of.h>
+#include <linux/of_device.h>
 #include <linux/of_net.h>
-#include <linux/platform_device.h>
 #include <linux/regmap.h>
 #include <linux/stmmac.h>
 
@@ -456,11 +456,18 @@ static int mediatek_dwmac_config_dt(struct mediatek_dwmac_plat_data *plat)
 {
 	struct mac_delay_struct *mac_delay = &plat->mac_delay;
 	u32 tx_delay_ps, rx_delay_ps;
+	int err;
 
 	plat->peri_regmap = syscon_regmap_lookup_by_phandle(plat->np, "mediatek,pericfg");
 	if (IS_ERR(plat->peri_regmap)) {
 		dev_err(plat->dev, "Failed to get pericfg syscon\n");
 		return PTR_ERR(plat->peri_regmap);
+	}
+
+	err = of_get_phy_mode(plat->np, &plat->phy_mode);
+	if (err) {
+		dev_err(plat->dev, "not find phy-mode\n");
+		return err;
 	}
 
 	if (!of_property_read_u32(plat->np, "mediatek,tx-delay-ps", &tx_delay_ps)) {
@@ -580,11 +587,8 @@ static int mediatek_dwmac_common_data(struct platform_device *pdev,
 {
 	int i;
 
-	priv_plat->phy_mode = plat->phy_interface;
-	if (priv_plat->mac_wol)
-		plat->flags &= ~STMMAC_FLAG_USE_PHY_WOL;
-	else
-		plat->flags |= STMMAC_FLAG_USE_PHY_WOL;
+	plat->interface = priv_plat->phy_mode;
+	plat->use_phy_wol = priv_plat->mac_wol ? 0 : 1;
 	plat->riwt_off = 1;
 	plat->maxmtu = ETH_DATA_LEN;
 	plat->host_dma_width = priv_plat->variant->dma_bit_mask;
@@ -649,7 +653,7 @@ static int mediatek_dwmac_probe(struct platform_device *pdev)
 	if (ret)
 		return ret;
 
-	plat_dat = devm_stmmac_probe_config_dt(pdev, stmmac_res.mac);
+	plat_dat = stmmac_probe_config_dt(pdev, stmmac_res.mac);
 	if (IS_ERR(plat_dat))
 		return PTR_ERR(plat_dat);
 
@@ -658,7 +662,7 @@ static int mediatek_dwmac_probe(struct platform_device *pdev)
 
 	ret = mediatek_dwmac_clks_config(priv_plat, true);
 	if (ret)
-		return ret;
+		goto err_remove_config_dt;
 
 	ret = stmmac_dvr_probe(&pdev->dev, plat_dat, &stmmac_res);
 	if (ret)
@@ -668,16 +672,21 @@ static int mediatek_dwmac_probe(struct platform_device *pdev)
 
 err_drv_probe:
 	mediatek_dwmac_clks_config(priv_plat, false);
+err_remove_config_dt:
+	stmmac_remove_config_dt(pdev, plat_dat);
 
 	return ret;
 }
 
-static void mediatek_dwmac_remove(struct platform_device *pdev)
+static int mediatek_dwmac_remove(struct platform_device *pdev)
 {
 	struct mediatek_dwmac_plat_data *priv_plat = get_stmmac_bsp_priv(&pdev->dev);
+	int ret;
 
-	stmmac_pltfr_remove(pdev);
+	ret = stmmac_pltfr_remove(pdev);
 	mediatek_dwmac_clks_config(priv_plat, false);
+
+	return ret;
 }
 
 static const struct of_device_id mediatek_dwmac_match[] = {

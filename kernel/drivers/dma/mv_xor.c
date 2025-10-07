@@ -10,8 +10,8 @@
 #include <linux/dma-mapping.h>
 #include <linux/spinlock.h>
 #include <linux/interrupt.h>
+#include <linux/of_device.h>
 #include <linux/platform_device.h>
-#include <linux/property.h>
 #include <linux/memory.h>
 #include <linux/clk.h>
 #include <linux/of.h>
@@ -414,7 +414,7 @@ mv_xor_tx_submit(struct dma_async_tx_descriptor *tx)
 		if (!mv_chan_is_busy(mv_chan)) {
 			u32 current_desc = mv_chan_get_current_desc(mv_chan);
 			/*
-			 * and the current desc is the end of the chain before
+			 * and the curren desc is the end of the chain before
 			 * the append, then we need to start the channel
 			 */
 			if (current_desc == old_chain_tail->async_tx.phys)
@@ -1084,7 +1084,7 @@ mv_xor_channel_add(struct mv_xor_device *xordev,
 		goto err_unmap_dst;
 	}
 
-	/* discover transaction capabilities from the platform data */
+	/* discover transaction capabilites from the platform data */
 	dma_dev->cap_mask = cap_mask;
 
 	INIT_LIST_HEAD(&dma_dev->channels);
@@ -1345,8 +1345,13 @@ static int mv_xor_probe(struct platform_device *pdev)
 	 * setting up. In non-dt case it can only be the legacy one.
 	 */
 	xordev->xor_type = XOR_ORION;
-	if (pdev->dev.of_node)
-		xordev->xor_type = (uintptr_t)device_get_match_data(&pdev->dev);
+	if (pdev->dev.of_node) {
+		const struct of_device_id *of_id =
+			of_match_device(mv_xor_dt_ids,
+					&pdev->dev);
+
+		xordev->xor_type = (uintptr_t)of_id->data;
+	}
 
 	/*
 	 * (Re-)program MBUS remapping windows if we are asked to.
@@ -1386,9 +1391,10 @@ static int mv_xor_probe(struct platform_device *pdev)
 		return 0;
 
 	if (pdev->dev.of_node) {
+		struct device_node *np;
 		int i = 0;
 
-		for_each_child_of_node_scoped(pdev->dev.of_node, np) {
+		for_each_child_of_node(pdev->dev.of_node, np) {
 			struct mv_xor_chan *chan;
 			dma_cap_mask_t cap_mask;
 			int irq;
@@ -1404,6 +1410,7 @@ static int mv_xor_probe(struct platform_device *pdev)
 			irq = irq_of_parse_and_map(np, 0);
 			if (!irq) {
 				ret = -ENODEV;
+				of_node_put(np);
 				goto err_channel_add;
 			}
 
@@ -1412,6 +1419,7 @@ static int mv_xor_probe(struct platform_device *pdev)
 			if (IS_ERR(chan)) {
 				ret = PTR_ERR(chan);
 				irq_dispose_mapping(irq);
+				of_node_put(np);
 				goto err_channel_add;
 			}
 

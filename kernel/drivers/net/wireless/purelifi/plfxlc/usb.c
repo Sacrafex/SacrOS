@@ -16,7 +16,7 @@
 #include <linux/string.h>
 #include <linux/module.h>
 #include <net/mac80211.h>
-#include <linux/unaligned.h>
+#include <asm/unaligned.h>
 #include <linux/sysfs.h>
 
 #include "mac.h"
@@ -408,7 +408,7 @@ void plfxlc_usb_init(struct plfxlc_usb *usb, struct ieee80211_hw *hw,
 
 void plfxlc_usb_release(struct plfxlc_usb *usb)
 {
-	plfxlc_op_stop(plfxlc_usb_to_hw(usb), false);
+	plfxlc_op_stop(plfxlc_usb_to_hw(usb));
 	plfxlc_usb_disable_tx(usb);
 	plfxlc_usb_disable_rx(usb);
 	usb_set_intfdata(usb->intf, NULL);
@@ -548,7 +548,7 @@ error:
 
 static void slif_data_plane_sap_timer_callb(struct timer_list *t)
 {
-	struct plfxlc_usb *usb = timer_container_of(usb, t, tx.tx_retry_timer);
+	struct plfxlc_usb *usb = from_timer(usb, t, tx.tx_retry_timer);
 
 	plfxlc_send_packet_from_data_queue(usb);
 	timer_setup(&usb->tx.tx_retry_timer,
@@ -558,7 +558,7 @@ static void slif_data_plane_sap_timer_callb(struct timer_list *t)
 
 static void sta_queue_cleanup_timer_callb(struct timer_list *t)
 {
-	struct plfxlc_usb *usb = timer_container_of(usb, t, sta_queue_cleanup);
+	struct plfxlc_usb *usb = from_timer(usb, t, sta_queue_cleanup);
 	struct plfxlc_usb_tx *tx = &usb->tx;
 	int sidx;
 
@@ -716,8 +716,8 @@ static void disconnect(struct usb_interface *intf)
 	mac = plfxlc_hw_mac(hw);
 	usb = &mac->chip.usb;
 
-	timer_delete_sync(&usb->tx.tx_retry_timer);
-	timer_delete_sync(&usb->sta_queue_cleanup);
+	del_timer_sync(&usb->tx.tx_retry_timer);
+	del_timer_sync(&usb->sta_queue_cleanup);
 
 	ieee80211_unregister_hw(hw);
 
@@ -762,7 +762,7 @@ static void plfxlc_usb_resume(struct plfxlc_usb *usb)
 
 static void plfxlc_usb_stop(struct plfxlc_usb *usb)
 {
-	plfxlc_op_stop(plfxlc_usb_to_hw(usb), false);
+	plfxlc_op_stop(plfxlc_usb_to_hw(usb));
 	plfxlc_usb_disable_tx(usb);
 	plfxlc_usb_disable_rx(usb);
 

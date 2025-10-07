@@ -26,7 +26,7 @@
 #include <linux/slab.h>
 #include <asm/byteorder.h>
 
-#include <linux/int_log.h>
+#include <media/dvb_math.h>
 #include <media/dvb_frontend.h>
 #include "or51211.h"
 
@@ -361,11 +361,8 @@ static int or51211_init(struct dvb_frontend* fe)
 			OR51211_DEFAULT_FIRMWARE);
 		ret = config->request_firmware(fe, &fw,
 					       OR51211_DEFAULT_FIRMWARE);
-		pr_info("Got Hotplug firmware\n");
-		if (ret) {
-			pr_warn("No firmware uploaded (timeout or file not found?)\n");
+		if (ret)
 			return ret;
-		}
 
 		ret = or51211_load_firmware(fe, fw);
 		release_firmware(fw);

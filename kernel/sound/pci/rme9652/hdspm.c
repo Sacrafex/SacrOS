@@ -1943,7 +1943,7 @@ snd_hdspm_midi_input_trigger(struct snd_rawmidi_substream *substream, int up)
 
 static void snd_hdspm_midi_output_timer(struct timer_list *t)
 {
-	struct hdspm_midi *hmidi = timer_container_of(hmidi, t, timer);
+	struct hdspm_midi *hmidi = from_timer(hmidi, t, timer);
 	unsigned long flags;
 
 	snd_hdspm_midi_output_write(hmidi);
@@ -1978,7 +1978,7 @@ snd_hdspm_midi_output_trigger(struct snd_rawmidi_substream *substream, int up)
 		}
 	} else {
 		if (hmidi->istimer && --hmidi->istimer <= 0)
-			timer_delete(&hmidi->timer);
+			del_timer (&hmidi->timer);
 	}
 	spin_unlock_irqrestore (&hmidi->lock, flags);
 	if (up)
@@ -3083,7 +3083,7 @@ static int snd_hdspm_get_autosync_ref(struct snd_kcontrol *kcontrol,
 
 
 
-#define HDSPM_TCO_VIDEO_INPUT_FORMAT(xname) \
+#define HDSPM_TCO_VIDEO_INPUT_FORMAT(xname, xindex) \
 {	.iface = SNDRV_CTL_ELEM_IFACE_MIXER, \
 	.name = xname, \
 	.access = SNDRV_CTL_ELEM_ACCESS_READ |\
@@ -3129,7 +3129,7 @@ static int snd_hdspm_get_tco_video_input_format(struct snd_kcontrol *kcontrol,
 
 
 
-#define HDSPM_TCO_LTC_FRAMES(xname) \
+#define HDSPM_TCO_LTC_FRAMES(xname, xindex) \
 {	.iface = SNDRV_CTL_ELEM_IFACE_MIXER, \
 	.name = xname, \
 	.access = SNDRV_CTL_ELEM_ACCESS_READ |\
@@ -4630,8 +4630,8 @@ static const struct snd_kcontrol_new snd_hdspm_controls_tco[] = {
 	HDSPM_TCO_WORD_TERM("TCO Word Term", 0),
 	HDSPM_TCO_LOCK_CHECK("TCO Input Check", 11),
 	HDSPM_TCO_LOCK_CHECK("TCO LTC Valid", 12),
-	HDSPM_TCO_LTC_FRAMES("TCO Detected Frame Rate"),
-	HDSPM_TCO_VIDEO_INPUT_FORMAT("Video Input Format")
+	HDSPM_TCO_LTC_FRAMES("TCO Detected Frame Rate", 0),
+	HDSPM_TCO_VIDEO_INPUT_FORMAT("Video Input Format", 0)
 };
 
 
@@ -4927,14 +4927,14 @@ snd_hdspm_proc_read_madi(struct snd_info_entry *entry,
 		x, (unsigned long) hdspm->period_bytes);
 
 	snd_iprintf(buffer, "Line out: %s\n",
-		    str_on_off(hdspm->control_register & HDSPM_LineOut));
+		(hdspm->control_register & HDSPM_LineOut) ? "on " : "off");
 
 	snd_iprintf(buffer,
 		"ClearTrackMarker = %s, Transmit in %s Channel Mode, "
 		"Auto Input %s\n",
-		str_on_off(hdspm->control_register & HDSPM_clr_tms),
+		(hdspm->control_register & HDSPM_clr_tms) ? "on" : "off",
 		(hdspm->control_register & HDSPM_TX_64ch) ? "64" : "56",
-		str_on_off(hdspm->control_register & HDSPM_AutoInp));
+		(hdspm->control_register & HDSPM_AutoInp) ? "on" : "off");
 
 
 	if (!(hdspm->control_register & HDSPM_ClockModeMaster))
@@ -5088,9 +5088,12 @@ snd_hdspm_proc_read_aes32(struct snd_info_entry * entry,
 
 	snd_iprintf(buffer,
 		    "ClearTrackMarker %s, Emphasis %s, Dolby %s\n",
-		    str_on_off(hdspm->control_register & HDSPM_clr_tms),
-		    str_on_off(hdspm->control_register & HDSPM_Emphasis),
-		    str_on_off(hdspm->control_register & HDSPM_Dolby));
+		    (hdspm->
+		     control_register & HDSPM_clr_tms) ? "on" : "off",
+		    (hdspm->
+		     control_register & HDSPM_Emphasis) ? "on" : "off",
+		    (hdspm->
+		     control_register & HDSPM_Dolby) ? "on" : "off");
 
 
 	pref_syncref = hdspm_pref_sync_ref(hdspm);
@@ -5609,13 +5612,15 @@ static int snd_hdspm_hw_params(struct snd_pcm_substream *substream,
 	/*
 	   dev_dbg(hdspm->card->dev,
 	   "Allocated sample buffer for %s at 0x%08X\n",
-	   snd_pcm_direction_name(substream->stream),
+	   substream->stream == SNDRV_PCM_STREAM_PLAYBACK ?
+	   "playback" : "capture",
 	   snd_pcm_sgbuf_get_addr(substream, 0));
 	   */
 	/*
 	   dev_dbg(hdspm->card->dev,
 	   "set_hwparams: %s %d Hz, %d channels, bs = %d\n",
-	   snd_pcm_direction_name(substream->stream),
+	   substream->stream == SNDRV_PCM_STREAM_PLAYBACK ?
+	   "playback" : "capture",
 	   params_rate(params), params_channels(params),
 	   params_buffer_size(params));
 	   */
@@ -6029,6 +6034,18 @@ static int snd_hdspm_hw_rule_out_channels(struct snd_pcm_hw_params *params,
 	return snd_interval_list(c, 3, list, 0);
 }
 
+
+static const unsigned int hdspm_aes32_sample_rates[] = {
+	32000, 44100, 48000, 64000, 88200, 96000, 128000, 176400, 192000
+};
+
+static const struct snd_pcm_hw_constraint_list
+hdspm_hw_constraints_aes32_sample_rates = {
+	.count = ARRAY_SIZE(hdspm_aes32_sample_rates),
+	.list = hdspm_aes32_sample_rates,
+	.mask = 0
+};
+
 static int snd_hdspm_open(struct snd_pcm_substream *substream)
 {
 	struct hdspm *hdspm = snd_pcm_substream_chip(substream);
@@ -6081,7 +6098,9 @@ static int snd_hdspm_open(struct snd_pcm_substream *substream)
 	}
 
 	if (AES32 == hdspm->io_type) {
-		runtime->hw.rates |= SNDRV_PCM_RATE_128000;
+		runtime->hw.rates |= SNDRV_PCM_RATE_KNOT;
+		snd_pcm_hw_constraint_list(runtime, 0, SNDRV_PCM_HW_PARAM_RATE,
+				&hdspm_hw_constraints_aes32_sample_rates);
 	} else {
 		snd_pcm_hw_rule_add(runtime, 0, SNDRV_PCM_HW_PARAM_RATE,
 				(playback ?
@@ -6127,6 +6146,12 @@ static int snd_hdspm_hwdep_dummy_op(struct snd_hwdep *hw, struct file *file)
 {
 	/* we have nothing to initialize but the call is required */
 	return 0;
+}
+
+static inline int copy_u32_le(void __user *dest, void __iomem *src)
+{
+	u32 val = readl(src);
+	return copy_to_user(dest, &val, 4);
 }
 
 static int snd_hdspm_hwdep_ioctl(struct snd_hwdep *hw, struct file *file,
@@ -6355,7 +6380,7 @@ static int snd_hdspm_create_hwdep(struct snd_card *card,
 
 	hdspm->hwdep = hw;
 	hw->private_data = hdspm;
-	strscpy(hw->name, "HDSPM hwdep interface");
+	strcpy(hw->name, "HDSPM hwdep interface");
 
 	hw->ops.open = snd_hdspm_hwdep_dummy_op;
 	hw->ops.ioctl = snd_hdspm_hwdep_ioctl;
@@ -6412,7 +6437,7 @@ static int snd_hdspm_create_pcm(struct snd_card *card,
 
 	hdspm->pcm = pcm;
 	pcm->private_data = hdspm;
-	strscpy(pcm->name, hdspm->card_name);
+	strcpy(pcm->name, hdspm->card_name);
 
 	snd_pcm_set_ops(pcm, SNDRV_PCM_STREAM_PLAYBACK,
 			&snd_hdspm_ops);
@@ -6512,8 +6537,8 @@ static int snd_hdspm_create(struct snd_card *card,
 	pci_read_config_word(hdspm->pci,
 			PCI_CLASS_REVISION, &hdspm->firmware_rev);
 
-	strscpy(card->mixername, "Xilinx FPGA");
-	strscpy(card->driver, "HDSPM");
+	strcpy(card->mixername, "Xilinx FPGA");
+	strcpy(card->driver, "HDSPM");
 
 	switch (hdspm->firmware_rev) {
 	case HDSPM_RAYDAT_REV:
@@ -6558,12 +6583,13 @@ static int snd_hdspm_create(struct snd_card *card,
 
 	pci_set_master(hdspm->pci);
 
-	hdspm->iobase = pcim_iomap_region(pci, 0, "hdspm");
-	if (IS_ERR(hdspm->iobase))
-		return PTR_ERR(hdspm->iobase);
+	err = pcim_iomap_regions(pci, 1 << 0, "hdspm");
+	if (err < 0)
+		return err;
 
 	hdspm->port = pci_resource_start(pci, 0);
 	io_extent = pci_resource_len(pci, 0);
+	hdspm->iobase = pcim_iomap_table(pci)[0];
 	dev_dbg(card->dev, "remapped region (0x%lx) 0x%lx-0x%lx\n",
 			(unsigned long)hdspm->iobase, hdspm->port,
 			hdspm->port + io_extent - 1);

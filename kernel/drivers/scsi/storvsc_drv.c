@@ -324,12 +324,8 @@ enum storvsc_request_type {
 #define SRB_STATUS_ABORTED		0x02
 #define SRB_STATUS_ERROR		0x04
 #define SRB_STATUS_INVALID_REQUEST	0x06
-#define SRB_STATUS_TIMEOUT		0x09
-#define SRB_STATUS_SELECTION_TIMEOUT	0x0A
-#define SRB_STATUS_BUS_RESET		0x0E
 #define SRB_STATUS_DATA_OVERRUN		0x12
 #define SRB_STATUS_INVALID_LUN		0x20
-#define SRB_STATUS_INTERNAL_ERROR	0x30
 
 #define SRB_STATUS(status) \
 	(status & ~(SRB_STATUS_AUTOSENSE_VALID | SRB_STATUS_QUEUE_FROZEN))
@@ -776,7 +772,7 @@ static void  handle_multichannel_storage(struct hv_device *device, int max_chns)
 
 	if (vstor_packet->operation != VSTOR_OPERATION_COMPLETE_IO ||
 	    vstor_packet->status != 0) {
-		dev_err(dev, "Failed to create sub-channel: op=%d, host=0x%x\n",
+		dev_err(dev, "Failed to create sub-channel: op=%d, sts=%d\n",
 			vstor_packet->operation, vstor_packet->status);
 		return;
 	}
@@ -923,13 +919,14 @@ static int storvsc_channel_init(struct hv_device *device, bool is_fc)
 
 	/*
 	 * Allocate state to manage the sub-channels.
-	 * We allocate an array based on the number of CPU ids. This array
-	 * is initially sparsely populated for the CPUs assigned to channels:
-	 * primary + sub-channels. As I/Os are initiated by different CPUs,
-	 * the slots for all online CPUs are populated to evenly distribute
-	 * the load across all channels.
+	 * We allocate an array based on the numbers of possible CPUs
+	 * (Hyper-V does not support cpu online/offline).
+	 * This Array will be sparseley populated with unique
+	 * channels - primary + sub-channels.
+	 * We will however populate all the slots to evenly distribute
+	 * the load.
 	 */
-	stor_device->stor_chns = kcalloc(nr_cpu_ids, sizeof(void *),
+	stor_device->stor_chns = kcalloc(num_possible_cpus(), sizeof(void *),
 					 GFP_KERNEL);
 	if (stor_device->stor_chns == NULL)
 		return -ENOMEM;
@@ -991,11 +988,6 @@ static void storvsc_handle_error(struct vmscsi_request *vm_srb,
 	case SRB_STATUS_ERROR:
 	case SRB_STATUS_ABORTED:
 	case SRB_STATUS_INVALID_REQUEST:
-	case SRB_STATUS_INTERNAL_ERROR:
-	case SRB_STATUS_TIMEOUT:
-	case SRB_STATUS_SELECTION_TIMEOUT:
-	case SRB_STATUS_BUS_RESET:
-	case SRB_STATUS_DATA_OVERRUN:
 		if (vm_srb->srb_status & SRB_STATUS_AUTOSENSE_VALID) {
 			/* Check for capacity change */
 			if ((asc == 0x2a) && (ascq == 0x9)) {
@@ -1183,7 +1175,7 @@ static void storvsc_on_io_completion(struct storvsc_device *stor_device,
 			STORVSC_LOGGING_WARN : STORVSC_LOGGING_ERROR;
 
 		storvsc_log_ratelimited(device, loglevel,
-			"tag#%d cmd 0x%x status: scsi 0x%x srb 0x%x host 0x%x\n",
+			"tag#%d cmd 0x%x status: scsi 0x%x srb 0x%x hv 0x%x\n",
 			scsi_cmd_to_rq(request->cmd)->tag,
 			stor_pkt->vm_srb.cdb[0],
 			vstor_packet->vm_srb.scsi_status,
@@ -1586,8 +1578,7 @@ static int storvsc_device_alloc(struct scsi_device *sdevice)
 	return 0;
 }
 
-static int storvsc_sdev_configure(struct scsi_device *sdevice,
-				  struct queue_limits *lim)
+static int storvsc_device_configure(struct scsi_device *sdevice)
 {
 	blk_queue_rq_timeout(sdevice->request_queue, (storvsc_timeout * HZ));
 
@@ -1693,9 +1684,9 @@ static int storvsc_host_reset_handler(struct scsi_cmnd *scmnd)
  * be unbounded on Azure.  Reset the timer unconditionally to give the host a
  * chance to perform EH.
  */
-static enum scsi_timeout_action storvsc_eh_timed_out(struct scsi_cmnd *scmnd)
+static enum blk_eh_timer_return storvsc_eh_timed_out(struct scsi_cmnd *scmnd)
 {
-	return SCSI_EH_RESET_TIMER;
+	return BLK_EH_RESET_TIMER;
 }
 
 static bool storvsc_scsi_cmd_ok(struct scsi_cmnd *scmnd)
@@ -1890,8 +1881,8 @@ static struct scsi_host_template scsi_driver = {
 	.eh_host_reset_handler =	storvsc_host_reset_handler,
 	.proc_name =		"storvsc_host",
 	.eh_timed_out =		storvsc_eh_timed_out,
-	.sdev_init =		storvsc_device_alloc,
-	.sdev_configure =	storvsc_sdev_configure,
+	.slave_alloc =		storvsc_device_alloc,
+	.slave_configure =	storvsc_device_configure,
 	.cmd_per_lun =		2048,
 	.this_id =		-1,
 	/* Ensure there are no gaps in presented sgls */
@@ -2138,7 +2129,7 @@ static int storvsc_change_queue_depth(struct scsi_device *sdev, int queue_depth)
 	return scsi_change_queue_depth(sdev, queue_depth);
 }
 
-static void storvsc_remove(struct hv_device *dev)
+static int storvsc_remove(struct hv_device *dev)
 {
 	struct storvsc_device *stor_device = hv_get_drvdata(dev);
 	struct Scsi_Host *host = stor_device->host;
@@ -2154,6 +2145,8 @@ static void storvsc_remove(struct hv_device *dev)
 	scsi_remove_host(host);
 	storvsc_dev_remove(dev);
 	scsi_host_put(host);
+
+	return 0;
 }
 
 static int storvsc_suspend(struct hv_device *hv_dev)

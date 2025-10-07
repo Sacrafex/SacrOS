@@ -10,6 +10,8 @@
 #include <linux/mfd/syscon.h>
 #include <linux/module.h>
 #include <linux/of.h>
+#include <linux/of_address.h>
+#include <linux/of_device.h>
 #include <linux/phy/phy.h>
 #include <linux/platform_device.h>
 #include <linux/spinlock.h>
@@ -87,7 +89,7 @@ static const struct phy_ops samsung_usb2_phy_ops = {
 };
 
 static struct phy *samsung_usb2_phy_xlate(struct device *dev,
-					const struct of_phandle_args *args)
+					struct of_phandle_args *args)
 {
 	struct samsung_usb2_phy_driver *drv;
 

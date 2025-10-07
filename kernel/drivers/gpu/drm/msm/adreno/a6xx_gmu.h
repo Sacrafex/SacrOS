@@ -4,11 +4,8 @@
 #ifndef _A6XX_GMU_H_
 #define _A6XX_GMU_H_
 
-#include <linux/completion.h>
 #include <linux/iopoll.h>
 #include <linux/interrupt.h>
-#include <linux/notifier.h>
-#include <linux/soc/qcom/qcom_aoss.h>
 #include "msm_drv.h"
 #include "a6xx_hfi.h"
 
@@ -17,18 +14,6 @@ struct a6xx_gmu_bo {
 	void *virt;
 	size_t size;
 	u64 iova;
-};
-
-#define GMU_MAX_GX_FREQS	16
-#define GMU_MAX_CX_FREQS	4
-#define GMU_MAX_BCMS		3
-
-struct a6xx_bcm {
-	char *name;
-	unsigned int buswidth;
-	bool fixed;
-	unsigned int perfmode;
-	unsigned int perfmode_bw;
 };
 
 /*
@@ -62,16 +47,15 @@ struct a6xx_gmu {
 	/* For serializing communication with the GMU: */
 	struct mutex lock;
 
-	struct drm_gpuvm *vm;
+	struct msm_gem_address_space *aspace;
 
-	void __iomem *mmio;
-	void __iomem *rscc;
+	void * __iomem mmio;
+	void * __iomem rscc;
 
 	int hfi_irq;
 	int gmu_irq;
 
 	struct device *gxpd;
-	struct device *cxpd;
 
 	int idle_level;
 
@@ -91,17 +75,12 @@ struct a6xx_gmu {
 	int current_perf_index;
 
 	int nr_gpu_freqs;
-	unsigned long gpu_freqs[GMU_MAX_GX_FREQS];
-	u32 gx_arc_votes[GMU_MAX_GX_FREQS];
-	struct a6xx_hfi_acd_table acd_table;
-
-	int nr_gpu_bws;
-	unsigned long gpu_bw_table[GMU_MAX_GX_FREQS];
-	u32 gpu_ib_votes[GMU_MAX_GX_FREQS][GMU_MAX_BCMS];
+	unsigned long gpu_freqs[16];
+	u32 gx_arc_votes[16];
 
 	int nr_gmu_freqs;
-	unsigned long gmu_freqs[GMU_MAX_CX_FREQS];
-	u32 cx_arc_votes[GMU_MAX_CX_FREQS];
+	unsigned long gmu_freqs[4];
+	u32 cx_arc_votes[4];
 
 	unsigned long freq;
 
@@ -110,23 +89,16 @@ struct a6xx_gmu {
 	bool initialized;
 	bool hung;
 	bool legacy; /* a618 or a630 */
-
-	/* For power domain callback */
-	struct notifier_block pd_nb;
-	struct completion pd_gate;
-
-	struct qmp *qmp;
-	struct a6xx_hfi_msg_bw_table *bw_table;
 };
 
 static inline u32 gmu_read(struct a6xx_gmu *gmu, u32 offset)
 {
-	return readl(gmu->mmio + (offset << 2));
+	return msm_readl(gmu->mmio + (offset << 2));
 }
 
 static inline void gmu_write(struct a6xx_gmu *gmu, u32 offset, u32 value)
 {
-	writel(value, gmu->mmio + (offset << 2));
+	msm_writel(value, gmu->mmio + (offset << 2));
 }
 
 static inline void
@@ -149,8 +121,8 @@ static inline u64 gmu_read64(struct a6xx_gmu *gmu, u32 lo, u32 hi)
 {
 	u64 val;
 
-	val = (u64) readl(gmu->mmio + (lo << 2));
-	val |= ((u64) readl(gmu->mmio + (hi << 2)) << 32);
+	val = (u64) msm_readl(gmu->mmio + (lo << 2));
+	val |= ((u64) msm_readl(gmu->mmio + (hi << 2)) << 32);
 
 	return val;
 }
@@ -161,12 +133,12 @@ static inline u64 gmu_read64(struct a6xx_gmu *gmu, u32 lo, u32 hi)
 
 static inline u32 gmu_read_rscc(struct a6xx_gmu *gmu, u32 offset)
 {
-	return readl(gmu->rscc + (offset << 2));
+	return msm_readl(gmu->rscc + (offset << 2));
 }
 
 static inline void gmu_write_rscc(struct a6xx_gmu *gmu, u32 offset, u32 value)
 {
-	writel(value, gmu->rscc + (offset << 2));
+	msm_writel(value, gmu->rscc + (offset << 2));
 }
 
 #define gmu_poll_timeout_rscc(gmu, addr, val, cond, interval, timeout) \
@@ -210,11 +182,9 @@ void a6xx_hfi_init(struct a6xx_gmu *gmu);
 int a6xx_hfi_start(struct a6xx_gmu *gmu, int boot_state);
 void a6xx_hfi_stop(struct a6xx_gmu *gmu);
 int a6xx_hfi_send_prep_slumber(struct a6xx_gmu *gmu);
-int a6xx_hfi_set_freq(struct a6xx_gmu *gmu, u32 perf_index, u32 bw_index);
+int a6xx_hfi_set_freq(struct a6xx_gmu *gmu, int index);
 
 bool a6xx_gmu_gx_is_on(struct a6xx_gmu *gmu);
 bool a6xx_gmu_sptprac_is_on(struct a6xx_gmu *gmu);
-void a6xx_sptprac_disable(struct a6xx_gmu *gmu);
-int a6xx_sptprac_enable(struct a6xx_gmu *gmu);
 
 #endif

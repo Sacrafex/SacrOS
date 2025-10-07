@@ -31,7 +31,6 @@ static DEFINE_RWLOCK(HFClock);
 
 
 MODULE_AUTHOR("Martin Bachem");
-MODULE_DESCRIPTION("mISDN driver for Colognechip HFC-S USB chip");
 MODULE_LICENSE("GPL");
 module_param(debug, uint, S_IRUGO | S_IWUSR);
 module_param(poll, int, 0);
@@ -679,7 +678,7 @@ ph_state(struct dchannel *dch)
 }
 
 /*
- * disable/enable BChannel for desired protocol
+ * disable/enable BChannel for desired protocoll
  */
 static int
 hfcsusb_setup_bch(struct bchannel *bch, int protocol)

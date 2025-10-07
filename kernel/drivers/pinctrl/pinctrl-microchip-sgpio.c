@@ -15,14 +15,12 @@
 #include <linux/mfd/ocelot.h>
 #include <linux/mod_devicetable.h>
 #include <linux/module.h>
+#include <linux/pinctrl/pinmux.h>
 #include <linux/platform_device.h>
 #include <linux/property.h>
 #include <linux/regmap.h>
 #include <linux/reset.h>
 #include <linux/spinlock.h>
-
-#include <linux/pinctrl/pinconf.h>
-#include <linux/pinctrl/pinmux.h>
 
 #include "core.h"
 #include "pinconf.h"
@@ -555,10 +553,10 @@ static int microchip_sgpio_get_direction(struct gpio_chip *gc, unsigned int gpio
 	return bank->is_input ? GPIO_LINE_DIRECTION_IN : GPIO_LINE_DIRECTION_OUT;
 }
 
-static int microchip_sgpio_set_value(struct gpio_chip *gc, unsigned int gpio,
-				     int value)
+static void microchip_sgpio_set_value(struct gpio_chip *gc,
+				unsigned int gpio, int value)
 {
-	return microchip_sgpio_direction_output(gc, gpio, value);
+	microchip_sgpio_direction_output(gc, gpio, value);
 }
 
 static int microchip_sgpio_get_value(struct gpio_chip *gc, unsigned int gpio)
@@ -719,6 +717,8 @@ static void microchip_sgpio_irq_ack(struct irq_data *data)
 
 static int microchip_sgpio_irq_set_type(struct irq_data *data, unsigned int type)
 {
+	type &= IRQ_TYPE_SENSE_MASK;
+
 	switch (type) {
 	case IRQ_TYPE_EDGE_BOTH:
 		irq_set_handler_locked(data, handle_edge_irq);

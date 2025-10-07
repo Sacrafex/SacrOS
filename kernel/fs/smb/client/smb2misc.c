@@ -13,7 +13,7 @@
 #include "smb2proto.h"
 #include "cifs_debug.h"
 #include "cifs_unicode.h"
-#include "../common/smb2status.h"
+#include "smb2status.h"
 #include "smb2glob.h"
 #include "nterr.h"
 #include "cached_dir.h"
@@ -145,7 +145,7 @@ smb2_check_message(char *buf, unsigned int len, struct TCP_Server_Info *server)
 	__u64 mid;
 
 	/* If server is a channel, select the primary channel */
-	pserver = SERVER_IS_CHAN(server) ? server->primary_server : server;
+	pserver = CIFS_SERVER_IS_CHAN(server) ? server->primary_server : server;
 
 	/*
 	 * Add function to do table lookup of StructureSize by command
@@ -614,19 +614,10 @@ smb2_is_valid_lease_break(char *buffer, struct TCP_Server_Info *server)
 	struct cifs_tcon *tcon;
 	struct cifs_pending_open *open;
 
-	/* Trace receipt of lease break request from server */
-	trace_smb3_lease_break_enter(le32_to_cpu(rsp->CurrentLeaseState),
-		le32_to_cpu(rsp->Flags),
-		le16_to_cpu(rsp->Epoch),
-		le32_to_cpu(rsp->hdr.Id.SyncId.TreeId),
-		le64_to_cpu(rsp->hdr.SessionId),
-		*((u64 *)rsp->LeaseKey),
-		*((u64 *)&rsp->LeaseKey[8]));
-
 	cifs_dbg(FYI, "Checking for lease break\n");
 
 	/* If server is a channel, select the primary channel */
-	pserver = SERVER_IS_CHAN(server) ? server->primary_server : server;
+	pserver = CIFS_SERVER_IS_CHAN(server) ? server->primary_server : server;
 
 	/* look up tcon based on tid & uid */
 	spin_lock(&cifs_tcp_ses_lock);
@@ -669,12 +660,10 @@ smb2_is_valid_lease_break(char *buffer, struct TCP_Server_Info *server)
 	spin_unlock(&cifs_tcp_ses_lock);
 	cifs_dbg(FYI, "Can not process lease break - no lease matched\n");
 	trace_smb3_lease_not_found(le32_to_cpu(rsp->CurrentLeaseState),
-					   le32_to_cpu(rsp->Flags),
-					   le16_to_cpu(rsp->Epoch),
-					   le32_to_cpu(rsp->hdr.Id.SyncId.TreeId),
-					   le64_to_cpu(rsp->hdr.SessionId),
-					   *((u64 *)rsp->LeaseKey),
-					   *((u64 *)&rsp->LeaseKey[8]));
+				   le32_to_cpu(rsp->hdr.Id.SyncId.TreeId),
+				   le64_to_cpu(rsp->hdr.SessionId),
+				   *((u64 *)rsp->LeaseKey),
+				   *((u64 *)&rsp->LeaseKey[8]));
 
 	return false;
 }
@@ -705,7 +694,7 @@ smb2_is_valid_oplock_break(char *buffer, struct TCP_Server_Info *server)
 	cifs_dbg(FYI, "oplock level 0x%x\n", rsp->OplockLevel);
 
 	/* If server is a channel, select the primary channel */
-	pserver = SERVER_IS_CHAN(server) ? server->primary_server : server;
+	pserver = CIFS_SERVER_IS_CHAN(server) ? server->primary_server : server;
 
 	/* look up tcon based on tid & uid */
 	spin_lock(&cifs_tcp_ses_lock);
@@ -778,7 +767,7 @@ smb2_cancelled_close_fid(struct work_struct *work)
 	if (rc)
 		cifs_tcon_dbg(VFS, "Close cancelled mid failed rc:%d\n", rc);
 
-	cifs_put_tcon(tcon, netfs_trace_tcon_ref_put_cancelled_close_fid);
+	cifs_put_tcon(tcon);
 	kfree(cancelled);
 }
 
@@ -822,8 +811,6 @@ smb2_handle_cancelled_close(struct cifs_tcon *tcon, __u64 persistent_fid,
 	if (tcon->tc_count <= 0) {
 		struct TCP_Server_Info *server = NULL;
 
-		trace_smb3_tcon_ref(tcon->debug_id, tcon->tc_count,
-				    netfs_trace_tcon_ref_see_cancelled_close);
 		WARN_ONCE(tcon->tc_count < 0, "tcon refcount is negative");
 		spin_unlock(&cifs_tcp_ses_lock);
 
@@ -837,14 +824,12 @@ smb2_handle_cancelled_close(struct cifs_tcon *tcon, __u64 persistent_fid,
 		return 0;
 	}
 	tcon->tc_count++;
-	trace_smb3_tcon_ref(tcon->debug_id, tcon->tc_count,
-			    netfs_trace_tcon_ref_get_cancelled_close);
 	spin_unlock(&cifs_tcp_ses_lock);
 
 	rc = __smb2_handle_cancelled_cmd(tcon, SMB2_CLOSE_HE, 0,
 					 persistent_fid, volatile_fid);
 	if (rc)
-		cifs_put_tcon(tcon, netfs_trace_tcon_ref_put_cancelled_close);
+		cifs_put_tcon(tcon);
 
 	return rc;
 }
@@ -872,7 +857,7 @@ smb2_handle_cancelled_mid(struct mid_q_entry *mid, struct TCP_Server_Info *serve
 					 rsp->PersistentFileId,
 					 rsp->VolatileFileId);
 	if (rc)
-		cifs_put_tcon(tcon, netfs_trace_tcon_ref_put_cancelled_mid);
+		cifs_put_tcon(tcon);
 
 	return rc;
 }

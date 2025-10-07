@@ -66,7 +66,6 @@ static const struct drm_framebuffer_funcs virtio_gpu_fb_funcs = {
 static int
 virtio_gpu_framebuffer_init(struct drm_device *dev,
 			    struct virtio_gpu_framebuffer *vgfb,
-			    const struct drm_format_info *info,
 			    const struct drm_mode_fb_cmd2 *mode_cmd,
 			    struct drm_gem_object *obj)
 {
@@ -74,7 +73,7 @@ virtio_gpu_framebuffer_init(struct drm_device *dev,
 
 	vgfb->base.obj[0] = obj;
 
-	drm_helper_mode_fill_fb_struct(dev, &vgfb->base, info, mode_cmd);
+	drm_helper_mode_fill_fb_struct(dev, &vgfb->base, mode_cmd);
 
 	ret = drm_framebuffer_init(dev, &vgfb->base, &virtio_gpu_fb_funcs);
 	if (ret) {
@@ -165,9 +164,11 @@ static int virtio_gpu_conn_get_modes(struct drm_connector *connector)
 	struct drm_display_mode *mode = NULL;
 	int count, width, height;
 
-	count = drm_edid_connector_add_modes(connector);
-	if (count)
-		return count;
+	if (output->edid) {
+		count = drm_add_edid_modes(connector, output->edid);
+		if (count)
+			return count;
+	}
 
 	width  = le32_to_cpu(output->info.r.width);
 	height = le32_to_cpu(output->info.r.height);
@@ -190,7 +191,7 @@ static int virtio_gpu_conn_get_modes(struct drm_connector *connector)
 }
 
 static enum drm_mode_status virtio_gpu_conn_mode_valid(struct drm_connector *connector,
-				      const struct drm_display_mode *mode)
+				      struct drm_display_mode *mode)
 {
 	struct virtio_gpu_output *output =
 		drm_connector_to_virtio_gpu_output(connector);
@@ -294,7 +295,6 @@ static int vgdev_output_init(struct virtio_gpu_device *vgdev, int index)
 static struct drm_framebuffer *
 virtio_gpu_user_framebuffer_create(struct drm_device *dev,
 				   struct drm_file *file_priv,
-				   const struct drm_format_info *info,
 				   const struct drm_mode_fb_cmd2 *mode_cmd)
 {
 	struct drm_gem_object *obj = NULL;
@@ -316,7 +316,7 @@ virtio_gpu_user_framebuffer_create(struct drm_device *dev,
 		return ERR_PTR(-ENOMEM);
 	}
 
-	ret = virtio_gpu_framebuffer_init(dev, virtio_gpu_fb, info, mode_cmd, obj);
+	ret = virtio_gpu_framebuffer_init(dev, virtio_gpu_fb, mode_cmd, obj);
 	if (ret) {
 		kfree(virtio_gpu_fb);
 		drm_gem_object_put(obj);
@@ -335,9 +335,6 @@ static const struct drm_mode_config_funcs virtio_gpu_mode_funcs = {
 int virtio_gpu_modeset_init(struct virtio_gpu_device *vgdev)
 {
 	int i, ret;
-
-	if (!vgdev->num_scanouts)
-		return 0;
 
 	ret = drmm_mode_config_init(vgdev->ddev);
 	if (ret)
@@ -365,9 +362,6 @@ void virtio_gpu_modeset_fini(struct virtio_gpu_device *vgdev)
 {
 	int i;
 
-	if (!vgdev->num_scanouts)
-		return;
-
 	for (i = 0 ; i < vgdev->num_scanouts; ++i)
-		drm_edid_free(vgdev->outputs[i].drm_edid);
+		kfree(vgdev->outputs[i].edid);
 }

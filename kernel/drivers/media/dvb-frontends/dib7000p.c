@@ -13,7 +13,7 @@
 #include <linux/mutex.h>
 #include <asm/div64.h>
 
-#include <linux/int_log.h>
+#include <media/dvb_math.h>
 #include <media/dvb_frontend.h>
 
 #include "dib7000p.h"
@@ -31,6 +31,11 @@ MODULE_PARM_DESC(buggy_sfn_workaround, "Enable work-around for buggy SFNs (defau
 		printk(KERN_DEBUG pr_fmt("%s: " fmt),			\
 		       __func__, ##arg);				\
 } while (0)
+
+struct i2c_device {
+	struct i2c_adapter *i2c_adap;
+	u8 i2c_addr;
+};
 
 struct dib7000p_state {
 	struct dvb_frontend demod;
@@ -2638,7 +2643,7 @@ static int dib7090_set_output_mode(struct dvb_frontend *fe, int mode)
 			dib7090_configMpegMux(state, 3, 1, 1);
 			dib7090_setHostBusMux(state, MPEG_ON_HOSTBUS);
 		} else {/* Use Smooth block */
-			dprintk("setting output mode TS_SERIAL using Smooth block\n");
+			dprintk("setting output mode TS_SERIAL using Smooth bloc\n");
 			dib7090_setHostBusMux(state, DEMOUT_ON_HOSTBUS);
 			outreg |= (2<<6) | (0 << 1);
 		}
@@ -2662,7 +2667,7 @@ static int dib7090_set_output_mode(struct dvb_frontend *fe, int mode)
 		outreg |= (1<<6);
 		break;
 
-	case OUTMODE_MPEG2_FIFO:	/* Using Smooth block because not supported by new Mpeg Mux block */
+	case OUTMODE_MPEG2_FIFO:	/* Using Smooth block because not supported by new Mpeg Mux bloc */
 		dprintk("setting output mode TS_FIFO using Smooth block\n");
 		dib7090_setHostBusMux(state, DEMOUT_ON_HOSTBUS);
 		outreg |= (5<<6);

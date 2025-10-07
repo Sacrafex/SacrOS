@@ -8,12 +8,11 @@
 #ifndef _NET_FLOW_H
 #define _NET_FLOW_H
 
+#include <linux/socket.h>
 #include <linux/in6.h>
 #include <linux/atomic.h>
-#include <linux/container_of.h>
+#include <net/flow_dissector.h>
 #include <linux/uidgid.h>
-
-struct flow_keys;
 
 /*
  * ifindex generation is per-net namespace, and loopback is
@@ -38,8 +37,6 @@ struct flowi_common {
 	__u8	flowic_flags;
 #define FLOWI_FLAG_ANYSRC		0x01
 #define FLOWI_FLAG_KNOWN_NH		0x02
-#define FLOWI_FLAG_L3MDEV_OIF		0x04
-#define FLOWI_FLAG_ANY_SPORT		0x08
 	__u32	flowic_secid;
 	kuid_t  flowic_uid;
 	__u32		flowic_multipath_hash;

@@ -714,7 +714,8 @@ static int vt_resizex(struct vc_data *vc, struct vt_consize __user *cs)
 				vcp->vc_scan_lines = v.v_vlin;
 			if (v.v_clin)
 				vcp->vc_cell_height = v.v_clin;
-			ret = __vc_resize(vcp, v.v_cols, v.v_rows, true);
+			vcp->vc_resize_user = 1;
+			ret = vc_resize(vcp, v.v_cols, v.v_rows);
 			if (ret) {
 				vcp->vc_scan_lines = save_scan_lines;
 				vcp->vc_cell_height = save_cell_height;
@@ -922,8 +923,9 @@ int vt_ioctl(struct tty_struct *tty,
 			vc = vc_cons[i].d;
 
 			if (vc) {
+				vc->vc_resize_user = 1;
 				/* FIXME: review v tty lock */
-				__vc_resize(vc_cons[i].d, cc, ll, true);
+				vc_resize(vc_cons[i].d, cc, ll);
 			}
 		}
 		console_unlock();
@@ -951,22 +953,6 @@ int vt_ioctl(struct tty_struct *tty,
 					(unsigned short __user *)arg);
 	case VT_WAITEVENT:
 		return vt_event_wait_ioctl((struct vt_event __user *)arg);
-
-	case VT_GETCONSIZECSRPOS:
-	{
-		struct vt_consizecsrpos concsr;
-
-		console_lock();
-		concsr.con_cols = vc->vc_cols;
-		concsr.con_rows = vc->vc_rows;
-		concsr.csr_col = vc->state.x;
-		concsr.csr_row = vc->state.y;
-		console_unlock();
-		if (copy_to_user(up, &concsr, sizeof(concsr)))
-			return -EFAULT;
-		return 0;
-	}
-
 	default:
 		return -ENOIOCTLCMD;
 	}

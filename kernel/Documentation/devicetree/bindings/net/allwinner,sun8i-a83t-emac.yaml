@@ -21,10 +21,8 @@ properties:
       - items:
           - enum:
               - allwinner,sun20i-d1-emac
-              - allwinner,sun50i-a100-emac
               - allwinner,sun50i-h6-emac
               - allwinner,sun50i-h616-emac0
-              - allwinner,sun55i-a523-gmac0
           - const: allwinner,sun50i-a64-emac
 
   reg:
@@ -41,9 +39,6 @@ properties:
 
   clock-names:
     const: stmmaceth
-
-  phy-supply:
-    description: PHY regulator
 
   syscon:
     $ref: /schemas/types.yaml#/definitions/phandle
@@ -65,7 +60,7 @@ required:
   - syscon
 
 allOf:
-  - $ref: snps,dwmac.yaml#
+  - $ref: "snps,dwmac.yaml#"
   - if:
       properties:
         compatible:
@@ -160,8 +155,6 @@ allOf:
               patternProperties:
                 "^ethernet-phy@[0-9a-f]$":
                   type: object
-                  $ref: ethernet-phy.yaml#
-                  unevaluatedProperties: false
                   description:
                     Integrated PHY node
 

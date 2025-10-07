@@ -11,7 +11,6 @@
 #include <asm/nvram.h>
 #include <linux/init.h>
 #include <linux/delay.h>
-#include <linux/of.h>
 #include <linux/slab.h>
 #include <sound/core.h>
 #include "pmac.h"
@@ -39,7 +38,7 @@ static void snd_pmac_screamer_wait(struct snd_pmac *chip)
 	while (!(in_le32(&chip->awacs->codec_stat) & MASK_VALID)) {
 		mdelay(1);
 		if (! --timeout) {
-			dev_dbg(chip->card->dev, "%s timeout\n", __func__);
+			snd_printd("snd_pmac_screamer_wait timeout\n");
 			break;
 		}
 	}
@@ -58,7 +57,7 @@ snd_pmac_awacs_write(struct snd_pmac *chip, int val)
 	out_le32(&chip->awacs->codec_ctrl, val | (chip->subframe << 22));
 	while (in_le32(&chip->awacs->codec_ctrl) & MASK_NEWECMD) {
 		if (! --timeout) {
-			dev_dbg(chip->card->dev, "%s timeout\n", __func__);
+			snd_printd("snd_pmac_awacs_write timeout\n");
 			break;
 		}
 	}
@@ -956,7 +955,7 @@ snd_pmac_awacs_init(struct snd_pmac *chip)
 	/*
 	 * build mixers
 	 */
-	strscpy(chip->card->mixername, "PowerMac AWACS");
+	strcpy(chip->card->mixername, "PowerMac AWACS");
 
 	err = build_mixers(chip, ARRAY_SIZE(snd_pmac_awacs_mixers),
 				snd_pmac_awacs_mixers);

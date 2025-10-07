@@ -8,7 +8,6 @@
 
 #include <linux/module.h>
 #include <linux/platform_device.h>
-#include <linux/property.h>
 #include <linux/slab.h>
 #include <linux/phy/phy.h>
 #include <linux/of.h>
@@ -792,15 +791,22 @@ static int ti_pipe3_probe(struct platform_device *pdev)
 	struct phy_provider *phy_provider;
 	struct device *dev = &pdev->dev;
 	int ret;
-	const struct pipe3_data *data;
+	const struct of_device_id *match;
+	struct pipe3_data *data;
 
 	phy = devm_kzalloc(dev, sizeof(*phy), GFP_KERNEL);
 	if (!phy)
 		return -ENOMEM;
 
-	data = device_get_match_data(dev);
-	if (!data)
+	match = of_match_device(ti_pipe3_id_table, dev);
+	if (!match)
 		return -EINVAL;
+
+	data = (struct pipe3_data *)match->data;
+	if (!data) {
+		dev_err(dev, "no driver data\n");
+		return -EINVAL;
+	}
 
 	phy->dev = dev;
 	phy->mode = data->mode;
@@ -848,7 +854,7 @@ static int ti_pipe3_probe(struct platform_device *pdev)
 	return PTR_ERR_OR_ZERO(phy_provider);
 }
 
-static void ti_pipe3_remove(struct platform_device *pdev)
+static int ti_pipe3_remove(struct platform_device *pdev)
 {
 	struct ti_pipe3 *phy = platform_get_drvdata(pdev);
 
@@ -857,6 +863,8 @@ static void ti_pipe3_remove(struct platform_device *pdev)
 		phy->sata_refclk_enabled = false;
 	}
 	pm_runtime_disable(&pdev->dev);
+
+	return 0;
 }
 
 static int ti_pipe3_enable_clocks(struct ti_pipe3 *phy)

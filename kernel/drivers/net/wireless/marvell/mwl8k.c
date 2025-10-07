@@ -587,18 +587,13 @@ static int mwl8k_request_firmware(struct mwl8k_priv *priv, char *fw_image,
 }
 
 struct mwl8k_cmd_pkt {
-	/* New members MUST be added within the __struct_group() macro below. */
-	__struct_group(mwl8k_cmd_pkt_hdr, hdr, __packed,
-		__le16	code;
-		__le16	length;
-		__u8	seq_num;
-		__u8	macid;
-		__le16	result;
-	);
-	char payload[];
+	__le16	code;
+	__le16	length;
+	__u8	seq_num;
+	__u8	macid;
+	__le16	result;
+	char	payload[];
 } __packed;
-static_assert(offsetof(struct mwl8k_cmd_pkt, payload) == sizeof(struct mwl8k_cmd_pkt_hdr),
-	      "struct member likely outside of __struct_group()");
 
 /*
  * Firmware loading.
@@ -2210,7 +2205,7 @@ static void mwl8k_enable_bsses(struct ieee80211_hw *hw, bool enable,
 /* Timeout firmware commands after 10s */
 #define MWL8K_CMD_TIMEOUT_MS	10000
 
-static int mwl8k_post_cmd(struct ieee80211_hw *hw, struct mwl8k_cmd_pkt_hdr *cmd)
+static int mwl8k_post_cmd(struct ieee80211_hw *hw, struct mwl8k_cmd_pkt *cmd)
 {
 	DECLARE_COMPLETION_ONSTACK(cmd_wait);
 	struct mwl8k_priv *priv = hw->priv;
@@ -2218,7 +2213,7 @@ static int mwl8k_post_cmd(struct ieee80211_hw *hw, struct mwl8k_cmd_pkt_hdr *cmd
 	dma_addr_t dma_addr;
 	unsigned int dma_size;
 	int rc;
-	unsigned long time_left = 0;
+	unsigned long timeout = 0;
 	u8 buf[32];
 	u32 bitmap = 0;
 
@@ -2265,8 +2260,8 @@ static int mwl8k_post_cmd(struct ieee80211_hw *hw, struct mwl8k_cmd_pkt_hdr *cmd
 	iowrite32(MWL8K_H2A_INT_DUMMY,
 		regs + MWL8K_HIU_H2A_INTERRUPT_EVENTS);
 
-	time_left = wait_for_completion_timeout(&cmd_wait,
-						msecs_to_jiffies(MWL8K_CMD_TIMEOUT_MS));
+	timeout = wait_for_completion_timeout(&cmd_wait,
+				msecs_to_jiffies(MWL8K_CMD_TIMEOUT_MS));
 
 	priv->hostcmd_wait = NULL;
 
@@ -2274,7 +2269,7 @@ static int mwl8k_post_cmd(struct ieee80211_hw *hw, struct mwl8k_cmd_pkt_hdr *cmd
 	dma_unmap_single(&priv->pdev->dev, dma_addr, dma_size,
 			 DMA_BIDIRECTIONAL);
 
-	if (!time_left) {
+	if (!timeout) {
 		wiphy_err(hw->wiphy, "Command %s timeout after %u ms\n",
 			  mwl8k_cmd_name(cmd->code, buf, sizeof(buf)),
 			  MWL8K_CMD_TIMEOUT_MS);
@@ -2282,7 +2277,7 @@ static int mwl8k_post_cmd(struct ieee80211_hw *hw, struct mwl8k_cmd_pkt_hdr *cmd
 	} else {
 		int ms;
 
-		ms = MWL8K_CMD_TIMEOUT_MS - jiffies_to_msecs(time_left);
+		ms = MWL8K_CMD_TIMEOUT_MS - jiffies_to_msecs(timeout);
 
 		rc = cmd->result ? -EINVAL : 0;
 		if (rc)
@@ -2307,7 +2302,7 @@ exit:
 
 static int mwl8k_post_pervif_cmd(struct ieee80211_hw *hw,
 				 struct ieee80211_vif *vif,
-				 struct mwl8k_cmd_pkt_hdr *cmd)
+				 struct mwl8k_cmd_pkt *cmd)
 {
 	if (vif != NULL)
 		cmd->macid = MWL8K_VIF(vif)->macid;
@@ -2359,7 +2354,7 @@ static void mwl8k_setup_5ghz_band(struct ieee80211_hw *hw)
  * CMD_GET_HW_SPEC (STA version).
  */
 struct mwl8k_cmd_get_hw_spec_sta {
-	struct mwl8k_cmd_pkt_hdr header;
+	struct mwl8k_cmd_pkt header;
 	__u8 hw_rev;
 	__u8 host_interface;
 	__le16 num_mcaddrs;
@@ -2508,7 +2503,7 @@ static int mwl8k_cmd_get_hw_spec_sta(struct ieee80211_hw *hw)
  * CMD_GET_HW_SPEC (AP version).
  */
 struct mwl8k_cmd_get_hw_spec_ap {
-	struct mwl8k_cmd_pkt_hdr header;
+	struct mwl8k_cmd_pkt header;
 	__u8 hw_rev;
 	__u8 host_interface;
 	__le16 num_wcb;
@@ -2602,7 +2597,7 @@ done:
  * CMD_SET_HW_SPEC.
  */
 struct mwl8k_cmd_set_hw_spec {
-	struct mwl8k_cmd_pkt_hdr header;
+	struct mwl8k_cmd_pkt header;
 	__u8 hw_rev;
 	__u8 host_interface;
 	__le16 num_mcaddrs;
@@ -2679,7 +2674,7 @@ static int mwl8k_cmd_set_hw_spec(struct ieee80211_hw *hw)
  * CMD_MAC_MULTICAST_ADR.
  */
 struct mwl8k_cmd_mac_multicast_adr {
-	struct mwl8k_cmd_pkt_hdr header;
+	struct mwl8k_cmd_pkt header;
 	__le16 action;
 	__le16 numaddr;
 	__u8 addr[][ETH_ALEN];
@@ -2690,7 +2685,7 @@ struct mwl8k_cmd_mac_multicast_adr {
 #define MWL8K_ENABLE_RX_ALL_MULTICAST	0x0004
 #define MWL8K_ENABLE_RX_BROADCAST	0x0008
 
-static struct mwl8k_cmd_pkt_hdr *
+static struct mwl8k_cmd_pkt *
 __mwl8k_cmd_mac_multicast_adr(struct ieee80211_hw *hw, int allmulti,
 			      struct netdev_hw_addr_list *mc_list)
 {
@@ -2738,7 +2733,7 @@ __mwl8k_cmd_mac_multicast_adr(struct ieee80211_hw *hw, int allmulti,
  * CMD_GET_STAT.
  */
 struct mwl8k_cmd_get_stat {
-	struct mwl8k_cmd_pkt_hdr header;
+	struct mwl8k_cmd_pkt header;
 	__le32 stats[64];
 } __packed;
 
@@ -2780,7 +2775,7 @@ static int mwl8k_cmd_get_stat(struct ieee80211_hw *hw,
  * CMD_RADIO_CONTROL.
  */
 struct mwl8k_cmd_radio_control {
-	struct mwl8k_cmd_pkt_hdr header;
+	struct mwl8k_cmd_pkt header;
 	__le16 action;
 	__le16 control;
 	__le16 radio_on;
@@ -2841,7 +2836,7 @@ mwl8k_set_radio_preamble(struct ieee80211_hw *hw, bool short_preamble)
 #define MWL8K_RF_TX_POWER_LEVEL_TOTAL	8
 
 struct mwl8k_cmd_rf_tx_power {
-	struct mwl8k_cmd_pkt_hdr header;
+	struct mwl8k_cmd_pkt header;
 	__le16 action;
 	__le16 support_level;
 	__le16 current_level;
@@ -2875,7 +2870,7 @@ static int mwl8k_cmd_rf_tx_power(struct ieee80211_hw *hw, int dBm)
 #define MWL8K_TX_POWER_LEVEL_TOTAL      12
 
 struct mwl8k_cmd_tx_power {
-	struct mwl8k_cmd_pkt_hdr header;
+	struct mwl8k_cmd_pkt header;
 	__le16 action;
 	__le16 band;
 	__le16 channel;
@@ -2934,7 +2929,7 @@ static int mwl8k_cmd_tx_power(struct ieee80211_hw *hw,
  * CMD_RF_ANTENNA.
  */
 struct mwl8k_cmd_rf_antenna {
-	struct mwl8k_cmd_pkt_hdr header;
+	struct mwl8k_cmd_pkt header;
 	__le16 antenna;
 	__le16 mode;
 } __packed;
@@ -2967,7 +2962,7 @@ mwl8k_cmd_rf_antenna(struct ieee80211_hw *hw, int antenna, int mask)
  * CMD_SET_BEACON.
  */
 struct mwl8k_cmd_set_beacon {
-	struct mwl8k_cmd_pkt_hdr header;
+	struct mwl8k_cmd_pkt header;
 	__le16 beacon_len;
 	__u8 beacon[];
 };
@@ -2997,7 +2992,7 @@ static int mwl8k_cmd_set_beacon(struct ieee80211_hw *hw,
  * CMD_SET_PRE_SCAN.
  */
 struct mwl8k_cmd_set_pre_scan {
-	struct mwl8k_cmd_pkt_hdr header;
+	struct mwl8k_cmd_pkt header;
 } __packed;
 
 static int mwl8k_cmd_set_pre_scan(struct ieee80211_hw *hw)
@@ -3022,7 +3017,7 @@ static int mwl8k_cmd_set_pre_scan(struct ieee80211_hw *hw)
  * CMD_BBP_REG_ACCESS.
  */
 struct mwl8k_cmd_bbp_reg_access {
-	struct mwl8k_cmd_pkt_hdr header;
+	struct mwl8k_cmd_pkt header;
 	__le16 action;
 	__le16 offset;
 	u8 value;
@@ -3063,7 +3058,7 @@ mwl8k_cmd_bbp_reg_access(struct ieee80211_hw *hw,
  * CMD_SET_POST_SCAN.
  */
 struct mwl8k_cmd_set_post_scan {
-	struct mwl8k_cmd_pkt_hdr header;
+	struct mwl8k_cmd_pkt header;
 	__le32 isibss;
 	__u8 bssid[ETH_ALEN];
 } __packed;
@@ -3151,7 +3146,7 @@ static void mwl8k_update_survey(struct mwl8k_priv *priv,
  * CMD_SET_RF_CHANNEL.
  */
 struct mwl8k_cmd_set_rf_channel {
-	struct mwl8k_cmd_pkt_hdr header;
+	struct mwl8k_cmd_pkt header;
 	__le16 action;
 	__u8 current_channel;
 	__le32 channel_flags;
@@ -3220,7 +3215,7 @@ static int mwl8k_cmd_set_rf_channel(struct ieee80211_hw *hw,
 #define MWL8K_FRAME_PROT_11N_HT_ALL			0x06
 
 struct mwl8k_cmd_update_set_aid {
-	struct mwl8k_cmd_pkt_hdr header;
+	struct	mwl8k_cmd_pkt header;
 	__le16	aid;
 
 	 /* AP's MAC address (BSSID) */
@@ -3292,7 +3287,7 @@ mwl8k_cmd_set_aid(struct ieee80211_hw *hw,
  * CMD_SET_RATE.
  */
 struct mwl8k_cmd_set_rate {
-	struct mwl8k_cmd_pkt_hdr header;
+	struct	mwl8k_cmd_pkt header;
 	__u8	legacy_rates[14];
 
 	/* Bitmap for supported MCS codes.  */
@@ -3328,7 +3323,7 @@ mwl8k_cmd_set_rate(struct ieee80211_hw *hw, struct ieee80211_vif *vif,
 #define MWL8K_FJ_BEACON_MAXLEN	128
 
 struct mwl8k_cmd_finalize_join {
-	struct mwl8k_cmd_pkt_hdr header;
+	struct mwl8k_cmd_pkt header;
 	__le32 sleep_interval;	/* Number of beacon periods to sleep */
 	__u8 beacon_data[MWL8K_FJ_BEACON_MAXLEN];
 } __packed;
@@ -3367,14 +3362,13 @@ static int mwl8k_cmd_finalize_join(struct ieee80211_hw *hw, void *frame,
  * CMD_SET_RTS_THRESHOLD.
  */
 struct mwl8k_cmd_set_rts_threshold {
-	struct mwl8k_cmd_pkt_hdr header;
+	struct mwl8k_cmd_pkt header;
 	__le16 action;
 	__le16 threshold;
 } __packed;
 
 static int
-mwl8k_cmd_set_rts_threshold(struct ieee80211_hw *hw, int radio_idx,
-			    int rts_thresh)
+mwl8k_cmd_set_rts_threshold(struct ieee80211_hw *hw, int rts_thresh)
 {
 	struct mwl8k_cmd_set_rts_threshold *cmd;
 	int rc;
@@ -3398,7 +3392,7 @@ mwl8k_cmd_set_rts_threshold(struct ieee80211_hw *hw, int radio_idx,
  * CMD_SET_SLOT.
  */
 struct mwl8k_cmd_set_slot {
-	struct mwl8k_cmd_pkt_hdr header;
+	struct mwl8k_cmd_pkt header;
 	__le16 action;
 	__u8 short_slot;
 } __packed;
@@ -3427,7 +3421,7 @@ static int mwl8k_cmd_set_slot(struct ieee80211_hw *hw, bool short_slot_time)
  * CMD_SET_EDCA_PARAMS.
  */
 struct mwl8k_cmd_set_edca_params {
-	struct mwl8k_cmd_pkt_hdr header;
+	struct mwl8k_cmd_pkt header;
 
 	/* See MWL8K_SET_EDCA_XXX below */
 	__le16 action;
@@ -3512,7 +3506,7 @@ mwl8k_cmd_set_edca_params(struct ieee80211_hw *hw, __u8 qnum,
  * CMD_SET_WMM_MODE.
  */
 struct mwl8k_cmd_set_wmm_mode {
-	struct mwl8k_cmd_pkt_hdr header;
+	struct mwl8k_cmd_pkt header;
 	__le16 action;
 } __packed;
 
@@ -3543,7 +3537,7 @@ static int mwl8k_cmd_set_wmm_mode(struct ieee80211_hw *hw, bool enable)
  * CMD_MIMO_CONFIG.
  */
 struct mwl8k_cmd_mimo_config {
-	struct mwl8k_cmd_pkt_hdr header;
+	struct mwl8k_cmd_pkt header;
 	__le32 action;
 	__u8 rx_antenna_map;
 	__u8 tx_antenna_map;
@@ -3574,7 +3568,7 @@ static int mwl8k_cmd_mimo_config(struct ieee80211_hw *hw, __u8 rx, __u8 tx)
  * CMD_USE_FIXED_RATE (STA version).
  */
 struct mwl8k_cmd_use_fixed_rate_sta {
-	struct mwl8k_cmd_pkt_hdr header;
+	struct mwl8k_cmd_pkt header;
 	__le32 action;
 	__le32 allow_rate_drop;
 	__le32 num_rates;
@@ -3616,7 +3610,7 @@ static int mwl8k_cmd_use_fixed_rate_sta(struct ieee80211_hw *hw)
  * CMD_USE_FIXED_RATE (AP version).
  */
 struct mwl8k_cmd_use_fixed_rate_ap {
-	struct mwl8k_cmd_pkt_hdr header;
+	struct mwl8k_cmd_pkt header;
 	__le32 action;
 	__le32 allow_rate_drop;
 	__le32 num_rates;
@@ -3657,7 +3651,7 @@ mwl8k_cmd_use_fixed_rate_ap(struct ieee80211_hw *hw, int mcast, int mgmt)
  * CMD_ENABLE_SNIFFER.
  */
 struct mwl8k_cmd_enable_sniffer {
-	struct mwl8k_cmd_pkt_hdr header;
+	struct mwl8k_cmd_pkt header;
 	__le32 action;
 } __packed;
 
@@ -3681,7 +3675,7 @@ static int mwl8k_cmd_enable_sniffer(struct ieee80211_hw *hw, bool enable)
 }
 
 struct mwl8k_cmd_update_mac_addr {
-	struct mwl8k_cmd_pkt_hdr header;
+	struct mwl8k_cmd_pkt header;
 	union {
 		struct {
 			__le16 mac_type;
@@ -3766,7 +3760,7 @@ static inline int mwl8k_cmd_del_mac_addr(struct ieee80211_hw *hw,
  * CMD_SET_RATEADAPT_MODE.
  */
 struct mwl8k_cmd_set_rate_adapt_mode {
-	struct mwl8k_cmd_pkt_hdr header;
+	struct mwl8k_cmd_pkt header;
 	__le16 action;
 	__le16 mode;
 } __packed;
@@ -3795,7 +3789,7 @@ static int mwl8k_cmd_set_rateadapt_mode(struct ieee80211_hw *hw, __u16 mode)
  * CMD_GET_WATCHDOG_BITMAP.
  */
 struct mwl8k_cmd_get_watchdog_bitmap {
-	struct mwl8k_cmd_pkt_hdr header;
+	struct mwl8k_cmd_pkt header;
 	u8	bitmap;
 } __packed;
 
@@ -3875,7 +3869,7 @@ done:
  * CMD_BSS_START.
  */
 struct mwl8k_cmd_bss_start {
-	struct mwl8k_cmd_pkt_hdr header;
+	struct mwl8k_cmd_pkt header;
 	__le32 enable;
 } __packed;
 
@@ -3970,7 +3964,7 @@ struct mwl8k_destroy_ba_stream {
 } __packed;
 
 struct mwl8k_cmd_bastream {
-	struct mwl8k_cmd_pkt_hdr	header;
+	struct mwl8k_cmd_pkt	header;
 	__le32	action;
 	union {
 		struct mwl8k_create_ba_stream	create_params;
@@ -4080,7 +4074,7 @@ static void mwl8k_destroy_ba(struct ieee80211_hw *hw,
  * CMD_SET_NEW_STN.
  */
 struct mwl8k_cmd_set_new_stn {
-	struct mwl8k_cmd_pkt_hdr header;
+	struct mwl8k_cmd_pkt header;
 	__le16 aid;
 	__u8 mac_addr[6];
 	__le16 stn_id;
@@ -4216,7 +4210,7 @@ static int mwl8k_cmd_set_new_stn_del(struct ieee80211_hw *hw,
 #define MIC_KEY_LENGTH		8
 
 struct mwl8k_cmd_update_encryption {
-	struct mwl8k_cmd_pkt_hdr header;
+	struct mwl8k_cmd_pkt header;
 
 	__le32 action;
 	__le32 reserved;
@@ -4226,7 +4220,7 @@ struct mwl8k_cmd_update_encryption {
 } __packed;
 
 struct mwl8k_cmd_set_key {
-	struct mwl8k_cmd_pkt_hdr header;
+	struct mwl8k_cmd_pkt header;
 
 	__le32 action;
 	__le32 reserved;
@@ -4514,7 +4508,7 @@ struct peer_capability_info {
 } __packed;
 
 struct mwl8k_cmd_update_stadb {
-	struct mwl8k_cmd_pkt_hdr header;
+	struct mwl8k_cmd_pkt header;
 
 	/* See STADB_ACTION_TYPE */
 	__le32	action;
@@ -4776,7 +4770,7 @@ static int mwl8k_start(struct ieee80211_hw *hw)
 	return rc;
 }
 
-static void mwl8k_stop(struct ieee80211_hw *hw, bool suspend)
+static void mwl8k_stop(struct ieee80211_hw *hw)
 {
 	struct mwl8k_priv *priv = hw->priv;
 	int i;
@@ -4960,7 +4954,7 @@ fail:
 	wiphy_err(hw->wiphy, "Firmware restart failed\n");
 }
 
-static int mwl8k_config(struct ieee80211_hw *hw, int radio_idx, u32 changed)
+static int mwl8k_config(struct ieee80211_hw *hw, u32 changed)
 {
 	struct ieee80211_conf *conf = &hw->conf;
 	struct mwl8k_priv *priv = hw->priv;
@@ -5184,7 +5178,7 @@ mwl8k_bss_info_changed(struct ieee80211_hw *hw, struct ieee80211_vif *vif,
 static u64 mwl8k_prepare_multicast(struct ieee80211_hw *hw,
 				   struct netdev_hw_addr_list *mc_list)
 {
-	struct mwl8k_cmd_pkt_hdr *cmd;
+	struct mwl8k_cmd_pkt *cmd;
 
 	/*
 	 * Synthesize and return a command packet that programs the
@@ -5244,7 +5238,7 @@ static void mwl8k_configure_filter(struct ieee80211_hw *hw,
 				   u64 multicast)
 {
 	struct mwl8k_priv *priv = hw->priv;
-	struct mwl8k_cmd_pkt_hdr *cmd = (void *)(unsigned long)multicast;
+	struct mwl8k_cmd_pkt *cmd = (void *)(unsigned long)multicast;
 
 	/*
 	 * AP firmware doesn't allow fine-grained control over
@@ -5326,10 +5320,9 @@ static void mwl8k_configure_filter(struct ieee80211_hw *hw,
 	mwl8k_fw_unlock(hw);
 }
 
-static int mwl8k_set_rts_threshold(struct ieee80211_hw *hw, int radio_idx,
-				   u32 value)
+static int mwl8k_set_rts_threshold(struct ieee80211_hw *hw, u32 value)
 {
-	return mwl8k_cmd_set_rts_threshold(hw, radio_idx, value);
+	return mwl8k_cmd_set_rts_threshold(hw, value);
 }
 
 static int mwl8k_sta_remove(struct ieee80211_hw *hw,
@@ -5621,12 +5614,7 @@ static void mwl8k_sw_scan_complete(struct ieee80211_hw *hw,
 }
 
 static const struct ieee80211_ops mwl8k_ops = {
-	.add_chanctx = ieee80211_emulate_add_chanctx,
-	.remove_chanctx = ieee80211_emulate_remove_chanctx,
-	.change_chanctx = ieee80211_emulate_change_chanctx,
-	.switch_vif_chanctx = ieee80211_emulate_switch_vif_chanctx,
 	.tx			= mwl8k_tx,
-	.wake_tx_queue		= ieee80211_handle_wake_tx_queue,
 	.start			= mwl8k_start,
 	.stop			= mwl8k_stop,
 	.add_interface		= mwl8k_add_interface,
@@ -5751,16 +5739,12 @@ static int mwl8k_firmware_load_success(struct mwl8k_priv *priv);
 static void mwl8k_fw_state_machine(const struct firmware *fw, void *context)
 {
 	struct mwl8k_priv *priv = context;
-	struct mwl8k_device_info *di = priv->device_info;
 	int rc;
 
 	switch (priv->fw_state) {
 	case FW_STATE_INIT:
-		if (!fw) {
-			printk(KERN_ERR "%s: Error requesting helper fw %s\n",
-			       pci_name(priv->pdev), di->helper_image);
+		if (!fw)
 			goto fail;
-		}
 		priv->fw_helper = fw;
 		rc = mwl8k_request_fw(priv, priv->fw_pref, &priv->fw_ucode,
 				      true);
@@ -5795,11 +5779,8 @@ static void mwl8k_fw_state_machine(const struct firmware *fw, void *context)
 		break;
 
 	case FW_STATE_LOADING_ALT:
-		if (!fw) {
-			printk(KERN_ERR "%s: Error requesting alt fw %s\n",
-			       pci_name(priv->pdev), di->helper_image);
+		if (!fw)
 			goto fail;
-		}
 		priv->fw_ucode = fw;
 		rc = mwl8k_firmware_load_success(priv);
 		if (rc)
@@ -5837,10 +5818,8 @@ retry:
 
 	/* Ask userland hotplug daemon for the device firmware */
 	rc = mwl8k_request_firmware(priv, fw_image, nowait);
-	if (rc) {
-		wiphy_err(hw->wiphy, "Firmware files not found\n");
+	if (rc)
 		return rc;
-	}
 
 	if (nowait)
 		return rc;
@@ -6032,7 +6011,7 @@ static int mwl8k_reload_firmware(struct ieee80211_hw *hw, char *fw_image)
 	struct mwl8k_priv *priv = hw->priv;
 	struct mwl8k_vif *vif, *tmp_vif;
 
-	mwl8k_stop(hw, false);
+	mwl8k_stop(hw);
 	mwl8k_rxq_deinit(hw, 0);
 
 	/*
@@ -6062,7 +6041,7 @@ static int mwl8k_reload_firmware(struct ieee80211_hw *hw, char *fw_image)
 	if (rc)
 		goto fail;
 
-	rc = mwl8k_config(hw, -1, ~0);
+	rc = mwl8k_config(hw, ~0);
 	if (rc)
 		goto fail;
 

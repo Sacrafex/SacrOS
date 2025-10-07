@@ -13,7 +13,9 @@
 #include <linux/err.h>
 #include <linux/idr.h>
 #include <linux/of.h>
+#include <linux/of_gpio.h>
 #include <linux/pagemap.h>
+#include <linux/pm_wakeup.h>
 #include <linux/export.h>
 #include <linux/leds.h>
 #include <linux/slab.h>
@@ -74,7 +76,7 @@ static void mmc_host_classdev_release(struct device *dev)
 	struct mmc_host *host = cls_dev_to_mmc_host(dev);
 	wakeup_source_unregister(host->ws);
 	if (of_alias_get_id(host->parent->of_node, "mmc") < 0)
-		ida_free(&mmc_host_ida, host->index);
+		ida_simple_remove(&mmc_host_ida, host->index);
 	kfree(host);
 }
 
@@ -86,7 +88,7 @@ static int mmc_host_classdev_shutdown(struct device *dev)
 	return 0;
 }
 
-static const struct class mmc_host_class = {
+static struct class mmc_host_class = {
 	.name		= "mmc_host",
 	.dev_release	= mmc_host_classdev_release,
 	.shutdown_pre	= mmc_host_classdev_shutdown,
@@ -147,13 +149,13 @@ void mmc_retune_disable(struct mmc_host *host)
 {
 	mmc_retune_unpause(host);
 	host->can_retune = 0;
-	timer_delete_sync(&host->retune_timer);
+	del_timer_sync(&host->retune_timer);
 	mmc_retune_clear(host);
 }
 
 void mmc_retune_timer_stop(struct mmc_host *host)
 {
-	timer_delete_sync(&host->retune_timer);
+	del_timer_sync(&host->retune_timer);
 }
 EXPORT_SYMBOL(mmc_retune_timer_stop);
 
@@ -212,7 +214,7 @@ out:
 
 static void mmc_retune_timer(struct timer_list *t)
 {
-	struct mmc_host *host = timer_container_of(host, t, retune_timer);
+	struct mmc_host *host = from_timer(host, t, retune_timer);
 
 	mmc_retune_needed(host);
 }
@@ -232,8 +234,10 @@ static void mmc_of_parse_timing_phase(struct device *dev, const char *prop,
 }
 
 void
-mmc_of_parse_clk_phase(struct device *dev, struct mmc_clk_phase_map *map)
+mmc_of_parse_clk_phase(struct mmc_host *host, struct mmc_clk_phase_map *map)
 {
+	struct device *dev = host->parent;
+
 	mmc_of_parse_timing_phase(dev, "clk-phase-legacy",
 				  &map->phase[MMC_TIMING_LEGACY]);
 	mmc_of_parse_timing_phase(dev, "clk-phase-mmc-hs",
@@ -264,7 +268,7 @@ EXPORT_SYMBOL(mmc_of_parse_clk_phase);
  * @host: host whose properties should be parsed.
  *
  * To keep the rest of the MMC subsystem unaware of whether DT has been
- * used to instantiate and configure this host instance or not, we
+ * used to to instantiate and configure this host instance or not, we
  * parse the properties and set respective generic mmc-host flags and
  * parameters.
  */
@@ -534,8 +538,7 @@ struct mmc_host *mmc_alloc_host(int extra, struct device *dev)
 		min_idx = mmc_first_nonreserved_index();
 		max_idx = 0;
 
-		index = ida_alloc_range(&mmc_host_ida, min_idx, max_idx - 1,
-					GFP_KERNEL);
+		index = ida_simple_get(&mmc_host_ida, min_idx, max_idx, GFP_KERNEL);
 		if (index < 0) {
 			kfree(host);
 			return NULL;
@@ -584,32 +587,6 @@ struct mmc_host *mmc_alloc_host(int extra, struct device *dev)
 
 EXPORT_SYMBOL(mmc_alloc_host);
 
-static void devm_mmc_host_release(struct device *dev, void *res)
-{
-	mmc_free_host(*(struct mmc_host **)res);
-}
-
-struct mmc_host *devm_mmc_alloc_host(struct device *dev, int extra)
-{
-	struct mmc_host **dr, *host;
-
-	dr = devres_alloc(devm_mmc_host_release, sizeof(*dr), GFP_KERNEL);
-	if (!dr)
-		return NULL;
-
-	host = mmc_alloc_host(extra, dev);
-	if (!host) {
-		devres_free(dr);
-		return NULL;
-	}
-
-	*dr = host;
-	devres_add(dev, dr);
-
-	return host;
-}
-EXPORT_SYMBOL(devm_mmc_alloc_host);
-
 static int mmc_validate_host_caps(struct mmc_host *host)
 {
 	struct device *dev = host->parent;
@@ -651,7 +628,9 @@ int mmc_add_host(struct mmc_host *host)
 
 	led_trigger_register_simple(dev_name(&host->class_dev), &host->led);
 
+#ifdef CONFIG_DEBUG_FS
 	mmc_add_host_debugfs(host);
+#endif
 
 	mmc_start_host(host);
 	return 0;
@@ -671,7 +650,9 @@ void mmc_remove_host(struct mmc_host *host)
 {
 	mmc_stop_host(host);
 
+#ifdef CONFIG_DEBUG_FS
 	mmc_remove_host_debugfs(host);
+#endif
 
 	device_del(&host->class_dev);
 

@@ -11,7 +11,7 @@ static struct ctl_table_header *xfs_table_header;
 #ifdef CONFIG_PROC_FS
 STATIC int
 xfs_stats_clear_proc_handler(
-	const struct ctl_table	*ctl,
+	struct ctl_table	*ctl,
 	int			write,
 	void			*buffer,
 	size_t			*lenp,
@@ -31,7 +31,7 @@ xfs_stats_clear_proc_handler(
 
 STATIC int
 xfs_panic_mask_proc_handler(
-	const struct ctl_table	*ctl,
+	struct ctl_table	*ctl,
 	int			write,
 	void			*buffer,
 	size_t			*lenp,
@@ -52,7 +52,7 @@ xfs_panic_mask_proc_handler(
 
 STATIC int
 xfs_deprecated_dointvec_minmax(
-	const struct ctl_table	*ctl,
+	struct ctl_table	*ctl,
 	int			write,
 	void			*buffer,
 	size_t			*lenp,
@@ -66,7 +66,7 @@ xfs_deprecated_dointvec_minmax(
 	return proc_dointvec_minmax(ctl, write, buffer, lenp, ppos);
 }
 
-static const struct ctl_table xfs_table[] = {
+static struct ctl_table xfs_table[] = {
 	{
 		.procname	= "irix_sgid_inherit",
 		.data		= &xfs_params.sgid_inherit.val,
@@ -206,12 +206,32 @@ static const struct ctl_table xfs_table[] = {
 		.extra2		= &xfs_params.stats_clear.max
 	},
 #endif /* CONFIG_PROC_FS */
+
+	{}
+};
+
+static struct ctl_table xfs_dir_table[] = {
+	{
+		.procname	= "xfs",
+		.mode		= 0555,
+		.child		= xfs_table
+	},
+	{}
+};
+
+static struct ctl_table xfs_root_table[] = {
+	{
+		.procname	= "fs",
+		.mode		= 0555,
+		.child		= xfs_dir_table
+	},
+	{}
 };
 
 int
 xfs_sysctl_register(void)
 {
-	xfs_table_header = register_sysctl("fs/xfs", xfs_table);
+	xfs_table_header = register_sysctl_table(xfs_root_table);
 	if (!xfs_table_header)
 		return -ENOMEM;
 	return 0;

@@ -5,10 +5,8 @@
 #include <linux/kref.h>
 #include <linux/nsproxy.h>
 #include <linux/ns_common.h>
-#include <linux/rculist_nulls.h>
 #include <linux/sched.h>
 #include <linux/workqueue.h>
-#include <linux/rcuref.h>
 #include <linux/rwsem.h>
 #include <linux/sysctl.h>
 #include <linux/err.h>
@@ -23,11 +21,9 @@ struct uid_gid_extent {
 };
 
 struct uid_gid_map { /* 64 bytes -- 1 cache line */
+	u32 nr_extents;
 	union {
-		struct {
-			struct uid_gid_extent extent[UID_GID_MAP_MAX_BASE_EXTENTS];
-			u32 nr_extents;
-		};
+		struct uid_gid_extent extent[UID_GID_MAP_MAX_BASE_EXTENTS];
 		struct {
 			struct uid_gid_extent *forward;
 			struct uid_gid_extent *reverse;
@@ -69,10 +65,6 @@ enum rlimit_type {
 	UCOUNT_RLIMIT_COUNTS,
 };
 
-#if IS_ENABLED(CONFIG_BINFMT_MISC)
-struct binfmt_misc;
-#endif
-
 struct user_namespace {
 	struct uid_gid_map	uid_map;
 	struct uid_gid_map	gid_map;
@@ -110,18 +102,13 @@ struct user_namespace {
 	struct ucounts		*ucounts;
 	long ucount_max[UCOUNT_COUNTS];
 	long rlimit_max[UCOUNT_RLIMIT_COUNTS];
-
-#if IS_ENABLED(CONFIG_BINFMT_MISC)
-	struct binfmt_misc *binfmt_misc;
-#endif
 } __randomize_layout;
 
 struct ucounts {
-	struct hlist_nulls_node node;
+	struct hlist_node node;
 	struct user_namespace *ns;
 	kuid_t uid;
-	struct rcu_head rcu;
-	rcuref_t count;
+	atomic_t count;
 	atomic_long_t ucount[UCOUNT_COUNTS];
 	atomic_long_t rlimit[UCOUNT_RLIMIT_COUNTS];
 };
@@ -134,14 +121,8 @@ void retire_userns_sysctls(struct user_namespace *ns);
 struct ucounts *inc_ucount(struct user_namespace *ns, kuid_t uid, enum ucount_type type);
 void dec_ucount(struct ucounts *ucounts, enum ucount_type type);
 struct ucounts *alloc_ucounts(struct user_namespace *ns, kuid_t uid);
+struct ucounts * __must_check get_ucounts(struct ucounts *ucounts);
 void put_ucounts(struct ucounts *ucounts);
-
-static inline struct ucounts * __must_check get_ucounts(struct ucounts *ucounts)
-{
-	if (rcuref_get(&ucounts->count))
-		return ucounts;
-	return NULL;
-}
 
 static inline long get_rlimit_value(struct ucounts *ucounts, enum rlimit_type type)
 {

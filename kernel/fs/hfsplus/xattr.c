@@ -13,7 +13,7 @@
 
 static int hfsplus_removexattr(struct inode *inode, const char *name);
 
-const struct xattr_handler * const hfsplus_xattr_handlers[] = {
+const struct xattr_handler *hfsplus_xattr_handlers[] = {
 	&hfsplus_xattr_osx_handler,
 	&hfsplus_xattr_user_handler,
 	&hfsplus_xattr_trusted_handler,
@@ -261,7 +261,7 @@ end_attr_file_creation:
 int __hfsplus_setxattr(struct inode *inode, const char *name,
 			const void *value, size_t size, int flags)
 {
-	int err;
+	int err = 0;
 	struct hfs_find_data cat_fd;
 	hfsplus_cat_entry entry;
 	u16 cat_entry_flags, cat_entry_type;
@@ -404,19 +404,21 @@ static int name_len(const char *xattr_name, int xattr_name_len)
 	return len;
 }
 
-static ssize_t copy_name(char *buffer, const char *xattr_name, int name_len)
+static int copy_name(char *buffer, const char *xattr_name, int name_len)
 {
-	ssize_t len;
+	int len = name_len;
+	int offset = 0;
 
-	if (!is_known_namespace(xattr_name))
-		len = scnprintf(buffer, name_len + XATTR_MAC_OSX_PREFIX_LEN,
-				 "%s%s", XATTR_MAC_OSX_PREFIX, xattr_name);
-	else
-		len = strscpy(buffer, xattr_name, name_len + 1);
+	if (!is_known_namespace(xattr_name)) {
+		memcpy(buffer, XATTR_MAC_OSX_PREFIX, XATTR_MAC_OSX_PREFIX_LEN);
+		offset += XATTR_MAC_OSX_PREFIX_LEN;
+		len += XATTR_MAC_OSX_PREFIX_LEN;
+	}
 
-	/* include NUL-byte in length for non-empty name */
-	if (len >= 0)
-		len++;
+	strncpy(buffer + offset, xattr_name, name_len);
+	memset(buffer + offset + name_len, 0, 1);
+	len += 1;
+
 	return len;
 }
 
@@ -496,7 +498,7 @@ ssize_t __hfsplus_getxattr(struct inode *inode, const char *name,
 	__be32 xattr_record_type;
 	u32 record_type;
 	u16 record_length = 0;
-	ssize_t res;
+	ssize_t res = 0;
 
 	if ((!S_ISREG(inode->i_mode) &&
 			!S_ISDIR(inode->i_mode)) ||
@@ -608,7 +610,7 @@ static inline int can_list(const char *xattr_name)
 static ssize_t hfsplus_listxattr_finder_info(struct dentry *dentry,
 						char *buffer, size_t size)
 {
-	ssize_t res;
+	ssize_t res = 0;
 	struct inode *inode = d_inode(dentry);
 	struct hfs_find_data fd;
 	u16 entry_type;
@@ -676,9 +678,10 @@ end_listxattr_finder_info:
 ssize_t hfsplus_listxattr(struct dentry *dentry, char *buffer, size_t size)
 {
 	ssize_t err;
-	ssize_t res;
+	ssize_t res = 0;
 	struct inode *inode = d_inode(dentry);
 	struct hfs_find_data fd;
+	u16 key_len = 0;
 	struct hfsplus_attr_key attr_key;
 	char *strbuf;
 	int xattr_name_len;
@@ -720,8 +723,7 @@ ssize_t hfsplus_listxattr(struct dentry *dentry, char *buffer, size_t size)
 	}
 
 	for (;;) {
-		u16 key_len = hfs_bnode_read_u16(fd.bnode, fd.keyoffset);
-
+		key_len = hfs_bnode_read_u16(fd.bnode, fd.keyoffset);
 		if (key_len == 0 || key_len > fd.tree->max_key_len) {
 			pr_err("invalid xattr key length: %d\n", key_len);
 			res = -EIO;
@@ -768,12 +770,12 @@ out:
 
 static int hfsplus_removexattr(struct inode *inode, const char *name)
 {
-	int err;
+	int err = 0;
 	struct hfs_find_data cat_fd;
 	u16 flags;
 	u16 cat_entry_type;
-	int is_xattr_acl_deleted;
-	int is_all_xattrs_deleted;
+	int is_xattr_acl_deleted = 0;
+	int is_all_xattrs_deleted = 0;
 
 	if (!HFSPLUS_SB(inode->i_sb)->attr_tree)
 		return -EOPNOTSUPP;
@@ -859,7 +861,7 @@ static int hfsplus_osx_getxattr(const struct xattr_handler *handler,
 }
 
 static int hfsplus_osx_setxattr(const struct xattr_handler *handler,
-				struct mnt_idmap *idmap,
+				struct user_namespace *mnt_userns,
 				struct dentry *unused, struct inode *inode,
 				const char *name, const void *buffer,
 				size_t size, int flags)

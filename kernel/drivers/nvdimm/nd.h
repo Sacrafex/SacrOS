@@ -422,7 +422,7 @@ struct nd_region {
 	struct nd_interleave_set *nd_set;
 	struct nd_percpu_lane __percpu *lane;
 	int (*flush)(struct nd_region *nd_region, struct bio *bio);
-	struct nd_mapping mapping[] __counted_by(ndr_mappings);
+	struct nd_mapping mapping[];
 };
 
 static inline bool nsl_validate_nlabel(struct nd_region *nd_region,
@@ -489,6 +489,7 @@ enum nd_async_mode {
 	ND_ASYNC,
 };
 
+int nd_integrity_init(struct gendisk *disk, unsigned long meta_size);
 void wait_nvdimm_bus_probe_idle(struct device *dev);
 void nd_device_register(struct device *dev);
 void nd_device_unregister(struct device *dev, enum nd_async_mode mode);
@@ -598,7 +599,7 @@ static inline int nd_pfn_validate(struct nd_pfn *nd_pfn, const char *sig)
 struct nd_dax *to_nd_dax(struct device *dev);
 #if IS_ENABLED(CONFIG_NVDIMM_DAX)
 int nd_dax_probe(struct device *dev, struct nd_namespace_common *ndns);
-bool is_nd_dax(const struct device *dev);
+bool is_nd_dax(struct device *dev);
 struct device *nd_dax_create(struct nd_region *nd_region);
 static inline struct device *nd_dax_devinit(struct nd_dax *nd_dax,
 					    struct nd_namespace_common *ndns)
@@ -614,7 +615,7 @@ static inline int nd_dax_probe(struct device *dev,
 	return -ENODEV;
 }
 
-static inline bool is_nd_dax(const struct device *dev)
+static inline bool is_nd_dax(struct device *dev)
 {
 	return false;
 }
@@ -673,7 +674,7 @@ static inline bool is_bad_pmem(struct badblocks *bb, sector_t sector,
 {
 	if (bb->count) {
 		sector_t first_bad;
-		sector_t num_bad;
+		int num_bad;
 
 		return !!badblocks_check(bb, sector, len / 512, &first_bad,
 				&num_bad);

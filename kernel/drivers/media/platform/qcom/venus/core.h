@@ -25,8 +25,8 @@
 
 #define VIDC_CLKS_NUM_MAX		4
 #define VIDC_VCODEC_CLKS_NUM_MAX	2
+#define VIDC_PMDOMAINS_NUM_MAX		3
 #define VIDC_RESETS_NUM_MAX		2
-#define VIDC_MAX_HIER_CODING_LAYER 6
 
 #define VENUS_MAX_FPS			240
 
@@ -50,14 +50,6 @@ struct bw_tbl {
 	u32 peak_10bit;
 };
 
-enum vpu_version {
-	VPU_VERSION_AR50,
-	VPU_VERSION_AR50_LITE,
-	VPU_VERSION_IRIS1,
-	VPU_VERSION_IRIS2,
-	VPU_VERSION_IRIS2_1,
-};
-
 struct venus_resources {
 	u64 dma_mask;
 	const struct freq_tbl *freq_tbl;
@@ -74,14 +66,13 @@ struct venus_resources {
 	const char * const vcodec0_clks[VIDC_VCODEC_CLKS_NUM_MAX];
 	const char * const vcodec1_clks[VIDC_VCODEC_CLKS_NUM_MAX];
 	unsigned int vcodec_clks_num;
-	const char **vcodec_pmdomains;
+	const char * const vcodec_pmdomains[VIDC_PMDOMAINS_NUM_MAX];
 	unsigned int vcodec_pmdomains_num;
 	const char **opp_pmdomain;
 	unsigned int vcodec_num;
 	const char * const resets[VIDC_RESETS_NUM_MAX];
 	unsigned int resets_num;
 	enum hfi_version hfi_version;
-	enum vpu_version vpu_version;
 	u8 num_vpp_pipes;
 	u32 max_load;
 	unsigned int vmem_id;
@@ -92,25 +83,6 @@ struct venus_resources {
 	u32 cp_nonpixel_start;
 	u32 cp_nonpixel_size;
 	const char *fwname;
-	const char *enc_nodename;
-	const char *dec_nodename;
-};
-
-enum venus_fmt {
-	VENUS_FMT_NV12			= 0,
-	VENUS_FMT_QC08C			= 1,
-	VENUS_FMT_QC10C			= 2,
-	VENUS_FMT_P010			= 3,
-	VENUS_FMT_H264			= 4,
-	VENUS_FMT_VP8			= 5,
-	VENUS_FMT_VP9			= 6,
-	VENUS_FMT_HEVC			= 7,
-	VENUS_FMT_VC1_ANNEX_G		= 8,
-	VENUS_FMT_VC1_ANNEX_L		= 9,
-	VENUS_FMT_MPEG4			= 10,
-	VENUS_FMT_MPEG2			= 11,
-	VENUS_FMT_H263			= 12,
-	VENUS_FMT_XVID			= 13,
 };
 
 struct venus_format {
@@ -137,7 +109,10 @@ struct venus_format {
  * @vcodec1_clks: an array of vcodec1 struct clk pointers
  * @video_path: an interconnect handle to video to/from memory path
  * @cpucfg_path: an interconnect handle to cpu configuration path
- * @pmdomains:	a pointer to a list of pmdomains
+ * @opp_table: an device OPP table handle
+ * @has_opp_table: does OPP table exist
+ * @pmdomains:	an array of pmdomains struct device pointers
+ * @opp_dl_venus: an device-link for device OPP
  * @opp_pmdomain: an OPP power-domain
  * @resets: an array of reset signals
  * @vdev_dec:	a reference to video device structure for decoder instances
@@ -171,10 +146,6 @@ struct venus_format {
  * @core0_usage_count: usage counter for core0
  * @core1_usage_count: usage counter for core1
  * @root:	debugfs root directory
- * @venus_ver:	the venus firmware version
- * @dump_core:	a flag indicating that a core dump is required
- * @ocs:	OF changeset pointer
- * @hwmode_dev:	a flag indicating that HW_CTRL_TRIGGER is used in clock driver
  */
 struct venus_core {
 	void __iomem *base;
@@ -191,8 +162,10 @@ struct venus_core {
 	struct clk *vcodec1_clks[VIDC_VCODEC_CLKS_NUM_MAX];
 	struct icc_path *video_path;
 	struct icc_path *cpucfg_path;
-	struct dev_pm_domain_list *pmdomains;
-	struct dev_pm_domain_list *opp_pmdomain;
+	bool has_opp_table;
+	struct device *pmdomains[VIDC_PMDOMAINS_NUM_MAX];
+	struct device_link *opp_dl_venus;
+	struct device *opp_pmdomain;
 	struct reset_control *resets[VIDC_RESETS_NUM_MAX];
 	struct video_device *vdev_dec;
 	struct video_device *vdev_enc;
@@ -231,14 +204,6 @@ struct venus_core {
 	unsigned int core0_usage_count;
 	unsigned int core1_usage_count;
 	struct dentry *root;
-	struct venus_img_version {
-		u32 major;
-		u32 minor;
-		u32 rev;
-	} venus_ver;
-	unsigned long dump_core;
-	struct of_changeset *ocs;
-	bool hwmode_dev;
 };
 
 struct vdec_controls {
@@ -260,7 +225,6 @@ struct venc_controls {
 	u32 rc_enable;
 	u32 const_quality;
 	u32 frame_skip_mode;
-	u32 layer_bitrate;
 
 	u32 h264_i_period;
 	u32 h264_entropy_mode;
@@ -279,8 +243,6 @@ struct venc_controls {
 	s32 h264_loop_filter_alpha;
 	s32 h264_loop_filter_beta;
 	u32 h264_8x8_transform;
-	u32 h264_hier_layers;
-	u32 h264_hier_layer_bitrate[VIDC_MAX_HIER_CODING_LAYER];
 
 	u32 hevc_i_qp;
 	u32 hevc_p_qp;
@@ -405,8 +367,7 @@ enum venus_inst_modes {
  * @ycbcr_enc:	current YCbCr encoding
  * @quantization:	current quantization
  * @xfer_func:	current xfer function
- * @codec_state:	current decoder API state (see DEC_STATE_)
- * @enc_state:		current encoder API state (see ENC_STATE_)
+ * @codec_state:	current codec API state (see DEC/ENC_STATE_)
  * @reconf_wait:	wait queue for resolution change event
  * @subscriptions:	used to hold current events subscriptions
  * @buf_count:		used to count number of buffers (reqbuf(0))
@@ -437,6 +398,7 @@ enum venus_inst_modes {
  * @error:	an error returned during last HFI sync operation
  * @session_error:	a flag rised by HFI interface in case of session error
  * @ops:		HFI operations
+ * @priv:	a private for HFI operations callbacks
  * @session_type:	the type of the session (decoder or encoder)
  * @hprop:	a union used as a holder by get property
  * @core_acquired:	the Core has been acquired
@@ -524,12 +486,6 @@ struct venus_inst {
 #define IS_V4(core)	((core)->res->hfi_version == HFI_VERSION_4XX)
 #define IS_V6(core)	((core)->res->hfi_version == HFI_VERSION_6XX)
 
-#define IS_AR50(core)		((core)->res->vpu_version == VPU_VERSION_AR50)
-#define IS_AR50_LITE(core)	((core)->res->vpu_version == VPU_VERSION_AR50_LITE)
-#define IS_IRIS1(core)		((core)->res->vpu_version == VPU_VERSION_IRIS1)
-#define IS_IRIS2(core)		((core)->res->vpu_version == VPU_VERSION_IRIS2)
-#define IS_IRIS2_1(core)	((core)->res->vpu_version == VPU_VERSION_IRIS2_1)
-
 #define ctrl_to_inst(ctrl)	\
 	container_of((ctrl)->handler, struct venus_inst, ctrl_handler)
 
@@ -557,21 +513,4 @@ venus_caps_by_codec(struct venus_core *core, u32 codec, u32 domain)
 	return NULL;
 }
 
-static inline bool
-is_fw_rev_or_newer(struct venus_core *core, u32 vmajor, u32 vminor, u32 vrev)
-{
-	return ((core)->venus_ver.major == vmajor &&
-		(core)->venus_ver.minor == vminor &&
-		(core)->venus_ver.rev >= vrev);
-}
-
-static inline bool
-is_fw_rev_or_older(struct venus_core *core, u32 vmajor, u32 vminor, u32 vrev)
-{
-	return ((core)->venus_ver.major == vmajor &&
-		(core)->venus_ver.minor == vminor &&
-		(core)->venus_ver.rev <= vrev);
-}
-
-void venus_close_common(struct venus_inst *inst);
 #endif

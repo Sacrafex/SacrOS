@@ -24,8 +24,6 @@
 #include <acpi/processor.h>
 #include <linux/context_tracking.h>
 
-#include "internal.h"
-
 /*
  * Include the apic definitions for x86 to have the APIC timer related defines
  * available also for UP (on SMP it gets magically included via linux/smp.h).
@@ -57,12 +55,6 @@ struct cpuidle_driver acpi_idle_driver = {
 };
 
 #ifdef CONFIG_ACPI_PROCESSOR_CSTATE
-void acpi_idle_rescan_dead_smt_siblings(void)
-{
-	if (cpuidle_get_driver() == &acpi_idle_driver)
-		arch_cpu_rescan_dead_smt_siblings();
-}
-
 static
 DEFINE_PER_CPU(struct acpi_processor_cx * [CPUIDLE_STATE_MAX], acpi_cstate);
 
@@ -116,8 +108,8 @@ static const struct dmi_system_id processor_power_dmi_table[] = {
 static void __cpuidle acpi_safe_halt(void)
 {
 	if (!tif_need_resched()) {
-		raw_safe_halt();
-		raw_local_irq_disable();
+		safe_halt();
+		local_irq_disable();
 	}
 }
 
@@ -154,7 +146,7 @@ static void lapic_timer_check_state(int state, struct acpi_processor *pr,
 
 static void __lapic_timer_propagate_broadcast(void *arg)
 {
-	struct acpi_processor *pr = arg;
+	struct acpi_processor *pr = (struct acpi_processor *) arg;
 
 	if (pr->power.timer_broadcast_on_state < INT_MAX)
 		tick_broadcast_enable();
@@ -335,7 +327,7 @@ static void acpi_processor_power_verify_c3(struct acpi_processor *pr,
 	 * the erratum), but this is known to disrupt certain ISA
 	 * devices thus we take the conservative approach.
 	 */
-	if (errata.piix4.fdma) {
+	else if (errata.piix4.fdma) {
 		acpi_handle_debug(pr->handle,
 				  "C3 not supported on PIIX4 with Type-F DMA\n");
 		return;
@@ -395,6 +387,8 @@ static void acpi_processor_power_verify_c3(struct acpi_processor *pr,
 	 * handle BM_RLD is to set it and leave it set.
 	 */
 	acpi_write_bit_register(ACPI_BITREG_BUS_MASTER_RLD, 1);
+
+	return;
 }
 
 static void acpi_cst_latency_sort(struct acpi_processor_cx *states, size_t length)
@@ -464,12 +458,14 @@ static int acpi_processor_power_verify(struct acpi_processor *pr)
 
 	lapic_timer_propagate_broadcast(pr);
 
-	return working;
+	return (working);
 }
 
 static int acpi_processor_get_cstate_info(struct acpi_processor *pr)
 {
+	unsigned int i;
 	int result;
+
 
 	/* NOTE: the idle thread may not be running while calling
 	 * this function */
@@ -487,7 +483,17 @@ static int acpi_processor_get_cstate_info(struct acpi_processor *pr)
 	acpi_processor_get_power_info_default(pr);
 
 	pr->power.count = acpi_processor_power_verify(pr);
-	pr->flags.power = 1;
+
+	/*
+	 * if one state of type C2 or C3 is available, mark this
+	 * CPU as being "idle manageable"
+	 */
+	for (i = 1; i < ACPI_PROCESSOR_MAX_POWER; i++) {
+		if (pr->power.states[i].valid) {
+			pr->power.count = i;
+			pr->flags.power = 1;
+		}
+	}
 
 	return 0;
 }
@@ -518,11 +524,8 @@ static int acpi_idle_bm_check(void)
 	return bm_status;
 }
 
-static __cpuidle void io_idle(unsigned long addr)
+static void wait_for_freeze(void)
 {
-	/* IO port based C-state */
-	inb(addr);
-
 #ifdef	CONFIG_X86
 	/* No delay is needed if we are in guest */
 	if (boot_cpu_has(X86_FEATURE_HYPERVISOR))
@@ -567,7 +570,9 @@ static void __cpuidle acpi_idle_do_entry(struct acpi_processor_cx *cx)
 	} else if (cx->entry_method == ACPI_CSTATE_HALT) {
 		acpi_safe_halt();
 	} else {
-		io_idle(cx->address);
+		/* IO port based C-state */
+		inb(cx->address);
+		wait_for_freeze();
 	}
 
 	perf_lopwr_cb(false);
@@ -578,7 +583,7 @@ static void __cpuidle acpi_idle_do_entry(struct acpi_processor_cx *cx)
  * @dev: the target CPU
  * @index: the index of suggested state
  */
-static void acpi_idle_play_dead(struct cpuidle_device *dev, int index)
+static int acpi_idle_play_dead(struct cpuidle_device *dev, int index)
 {
 	struct acpi_processor_cx *cx = per_cpu(acpi_cstate[index], dev->cpu);
 
@@ -587,17 +592,23 @@ static void acpi_idle_play_dead(struct cpuidle_device *dev, int index)
 	while (1) {
 
 		if (cx->entry_method == ACPI_CSTATE_HALT)
-			raw_safe_halt();
+			safe_halt();
 		else if (cx->entry_method == ACPI_CSTATE_SYSTEMIO) {
-			io_idle(cx->address);
-		} else if (cx->entry_method == ACPI_CSTATE_FFH) {
-			acpi_processor_ffh_play_dead(cx);
+			inb(cx->address);
+			wait_for_freeze();
 		} else
-			return;
+			return -ENODEV;
+
+#if defined(CONFIG_X86) && defined(CONFIG_HOTPLUG_CPU)
+		cond_wakeup_cpu0();
+#endif
 	}
+
+	/* Never reached */
+	return 0;
 }
 
-static __always_inline bool acpi_idle_fallback_to_c1(struct acpi_processor *pr)
+static bool acpi_idle_fallback_to_c1(struct acpi_processor *pr)
 {
 	return IS_ENABLED(CONFIG_HOTPLUG_CPU) && !pr->flags.has_cst &&
 		!(acpi_gbl_FADT.flags & ACPI_FADT_C2_MP_SUPPORTED);
@@ -632,8 +643,6 @@ static int __cpuidle acpi_idle_enter_bm(struct cpuidle_driver *drv,
 	 */
 	bool dis_bm = pr->flags.bm_control;
 
-	instrumentation_begin();
-
 	/* If we can skip BM, demote to a safe state. */
 	if (!cx->bm_sts_skip && acpi_idle_bm_check()) {
 		dis_bm = false;
@@ -655,11 +664,11 @@ static int __cpuidle acpi_idle_enter_bm(struct cpuidle_driver *drv,
 		raw_spin_unlock(&c3_lock);
 	}
 
-	ct_cpuidle_enter();
+	ct_idle_enter();
 
 	acpi_idle_do_entry(cx);
 
-	ct_cpuidle_exit();
+	ct_idle_exit();
 
 	/* Re-enable bus master arbitration */
 	if (dis_bm) {
@@ -668,8 +677,6 @@ static int __cpuidle acpi_idle_enter_bm(struct cpuidle_driver *drv,
 		c3_cpu_count--;
 		raw_spin_unlock(&c3_lock);
 	}
-
-	instrumentation_end();
 
 	return index;
 }
@@ -802,12 +809,12 @@ static int acpi_processor_setup_cstates(struct acpi_processor *pr)
 		state->enter = acpi_idle_enter;
 
 		state->flags = 0;
-
-		state->enter_dead = acpi_idle_play_dead;
-
-		if (cx->type == ACPI_STATE_C1 || cx->type == ACPI_STATE_C2)
-			drv->safe_state_index = count;
-
+		if (cx->type == ACPI_STATE_C1 || cx->type == ACPI_STATE_C2 ||
+		    cx->type == ACPI_STATE_C3) {
+			state->enter_dead = acpi_idle_play_dead;
+			if (cx->type != ACPI_STATE_C3)
+				drv->safe_state_index = count;
+		}
 		/*
 		 * Halt-induced C1 is not good for ->enter_s2idle, because it
 		 * re-enables interrupts on exit.  Moreover, C1 is generally not
@@ -1211,9 +1218,8 @@ static int acpi_processor_setup_lpi_states(struct acpi_processor *pr)
 		strscpy(state->desc, lpi->desc, CPUIDLE_DESC_LEN);
 		state->exit_latency = lpi->wake_latency;
 		state->target_residency = lpi->min_residency;
-		state->flags |= arch_get_idle_state_flags(lpi->arch_flags);
-		if (i != 0 && lpi->entry_method == ACPI_CSTATE_FFH)
-			state->flags |= CPUIDLE_FLAG_RCU_IDLE;
+		if (lpi->arch_flags)
+			state->flags |= CPUIDLE_FLAG_TIMER_STOP;
 		state->enter = acpi_idle_lpi_enter;
 		drv->safe_state_index = i;
 	}

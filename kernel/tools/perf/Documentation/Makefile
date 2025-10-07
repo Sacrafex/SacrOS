@@ -45,7 +45,7 @@ man5dir=$(mandir)/man5
 man7dir=$(mandir)/man7
 
 ASCIIDOC=asciidoc
-ASCIIDOC_EXTRA += --unsafe -f asciidoc.conf
+ASCIIDOC_EXTRA +=
 ASCIIDOC_HTML = xhtml11
 MANPAGE_XSL = manpage-normal.xsl
 XMLTO_EXTRA =
@@ -128,6 +128,9 @@ XMLTO_EXTRA += -m manpage-bold-literal.xsl
 endif
 ifdef DOCBOOK_SUPPRESS_SP
 XMLTO_EXTRA += -m manpage-suppress-sp.xsl
+endif
+ifdef KBUILD_BUILD_TIMESTAMP
+ASCIIDOC_EXTRA += -a revdate=$(shell date -u -d '$(KBUILD_BUILD_TIMESTAMP)' +%Y-%m-%d)
 endif
 
 SHELL_PATH ?= $(SHELL)
@@ -250,20 +253,11 @@ $(MAN_HTML): $(OUTPUT)%.html : %.txt
 		$(ASCIIDOC_EXTRA) -aperf_version=$(PERF_VERSION) -o $@+ $< && \
 	mv $@+ $@
 
-# Generate date from either KBUILD_BUILD_TIMESTAMP or git log of
-# the doc input file
-PERF_DATE = $(strip \
-              $(if $(KBUILD_BUILD_TIMESTAMP), \
-                $(shell date -u -d '$(KBUILD_BUILD_TIMESTAMP)' +%Y-%m-%d), \
-                $(shell git log -1 --pretty="format:%cd" \
-                    --date=short --no-show-signature $<)))
-
 ifdef USE_ASCIIDOCTOR
 $(OUTPUT)%.1 $(OUTPUT)%.5 $(OUTPUT)%.7 : %.txt
 	$(QUIET_ASCIIDOC)$(RM) $@+ $@ && \
 	$(ASCIIDOC) -b manpage -d manpage \
-		$(ASCIIDOC_EXTRA) -aperf_version=$(PERF_VERSION) \
-		-adocdate=$(PERF_DATE) -o $@+ $< && \
+		$(ASCIIDOC_EXTRA) -aperf_version=$(PERF_VERSION) -o $@+ $< && \
 	mv $@+ $@
 endif
 
@@ -275,7 +269,9 @@ $(OUTPUT)%.xml : %.txt
 	$(QUIET_ASCIIDOC)$(RM) $@+ $@ && \
 	$(ASCIIDOC) -b docbook -d manpage \
 		$(ASCIIDOC_EXTRA) -aperf_version=$(PERF_VERSION) \
-		-aperf_date=$(PERF_DATE) -o $@+ $< && \
+		-aperf_date=$(shell git log -1 --pretty="format:%cd" \
+				--date=short $<) \
+		-o $@+ $< && \
 	mv $@+ $@
 
 XSLT = docbook.xsl
