@@ -1,0 +1,12 @@
+{
+  "name": "library-application",
+  "version": "1.0.0",
+  "description": "Electron app for SacrOS library management",
+  "main": "main.js",
+  "scripts": {
+    "start": "electron ."
+  },
+  "devDependencies": {
+    "electron": "^26.2.0"
+  }
+}
