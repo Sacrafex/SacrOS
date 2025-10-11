@@ -1,2 +1,33 @@
 disk.img
 /build
+# Ignore all files larger than 50MB
+*.[5-9][0-9]M
+*.100M
+
+apps/setupapplication/node_modules
+
+# Ignore all build files and directories
+/build/
+/kernel/.tmp_vmlinux.kallsyms*
+/kernel/vmlinux*
+/kernel/scripts/initrd.img
+
+# Ignore specific files and directories with permission issues
+/build/sacros-rootfs/root
+/build/sacros-rootfs/run/sudo
+/build/sacros-rootfs/var/log/private
+/build/sacros-rootfs/var/lib/private
+/build/sacros-rootfs/var/lib/NetworkManager
+/build/sacros-rootfs/var/lib/apt/lists/ftp.us.debian.org_debian_dists_stable_main_binary-amd64_Packages
+/build/sacros-rootfs/var/lib/apt/lists/partial
+/build/sacros-rootfs/var/spool/cron/crontabs
+/build/sacros-rootfs/var/cache/ldconfig
+/build/sacros-rootfs/var/cache/private
+/build/sacros-rootfs/var/cache/apt/archives/partial
+/build/sacros-rootfs/etc/ssl/private
+/build/sacros-rootfs/etc/credstore
+/build/sacros-rootfs/etc/credstore.encrypted
+/build/sacros-rootfs/etc/polkit-1/rules.d
+
+# Ignore Electron binaries
+/apps/setupapplication/node_modules/electron/dist/electron
